@@ -110,31 +110,41 @@ l'estensione lo usa **solo** quando la finestra non ha alcuna cartella aperta.
 
 ### Notifiche desktop
 
-Quando lo stato cambia **e la finestra VSCode non è a fuoco**, arriva una
-**notifica di sistema** (toast) — così te ne accorgi anche mentre lavori su
-un'altra applicazione. La notifica scatta solo per gli stati in cui Claude
-aspetta te o ha finito:
+Quando lo stato cambia arriva una **notifica di sistema** (toast). Di default
+scatta **sempre**, ma puoi limitarla a quando la finestra VSCode non è in primo
+piano, o disattivarla del tutto (impostazione `notifications.when`, vedi sotto).
+La notifica scatta solo per gli stati in cui Claude aspetta te o ha finito:
 
 | Nuovo stato | Notifica                                      |
 | ----------- | --------------------------------------------- |
 | 🟠 waiting  | "Claude needs you — waiting for your input"   |
 | 🟢 idle     | "Claude is ready — you can type a new prompt" |
 
-Se la finestra VSCode **è** a fuoco non arriva nulla (stai già guardando il
-semaforo). Il titolo include il nome della cartella, utile con più progetti
-aperti. Toast nativo: PowerShell (Windows), `osascript` (macOS),
-`notify-send` (Linux).
+Il titolo include il nome della cartella, utile con più progetti aperti. Toast
+nativo: PowerShell (Windows), `osascript` (macOS), `notify-send` (Linux).
 
 **Impostazioni** (`File → Preferences → Settings`, cerca "Claude Status"):
 
 | Impostazione                                     | Default              | Cosa fa                                                                                 |
 | ------------------------------------------------ | -------------------- | --------------------------------------------------------------------------------------- |
-| `claudeSemaforo.notifications.enabled`           | `true`               | Attiva/disattiva le notifiche desktop.                                                  |
+| `claudeSemaforo.notifications.when`              | `always`             | Quando notificare: `always` (sempre, anche a finestra in primo piano), `whenUnfocused` (solo se non in primo piano), `never` (mai). |
 | `claudeSemaforo.notifications.sound`             | `true`               | Riproduce un suono con la notifica.                                                     |
-| `claudeSemaforo.notifications.onlyWhenUnfocused` | `true`               | Notifica solo se la finestra VSCode non è a fuoco. Metti `false` per notificare sempre. |
 | `claudeSemaforo.notifications.states`            | `["waiting","idle"]` | Quali stati notificare (`working`, `waiting`, `idle`).                                  |
+| `claudeSemaforo.staleWorkingTimeoutSeconds`      | `120`                | Rete di sicurezza per le interruzioni (vedi sotto). `0` = disattivato.                  |
 
 Le impostazioni si applicano **subito**, senza ricaricare VSCode.
+
+### Interruzioni (Esc)
+
+Claude Code **non** emette alcun hook quando interrompi un'azione con `Esc`
+(non esiste un evento di annullamento). Senza rete, il file resterebbe su
+`working` e il semaforo **rimarrebbe rosso per sempre**. Per questo, se lo stato
+resta `working` per più di `staleWorkingTimeoutSeconds` secondi **senza
+aggiornamenti e senza un tool in esecuzione** (`PreToolUse`), l'estensione lo
+considera terminato e passa a 🟢. Un tool lungo (es. una build) resta invece 🔴,
+perché sta davvero lavorando. Alza il valore se vedi falsi 🟢 durante attese
+lunghe, abbassalo per sbloccare prima dopo un'interruzione, o metti `0` per
+disattivare del tutto.
 
 **Animazione del beacon:** 🟠 waiting **lampeggia** (Claude ti aspetta → attira l'attenzione), 🔴 working fa un "respiro" gentile, 🟢 idle e ⚪ offline restano fissi. Rispetta `prefers-reduced-motion`.
 

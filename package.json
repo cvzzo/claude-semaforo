@@ -2,7 +2,7 @@
   "name": "claude-semaforo",
   "displayName": "Claude Status",
   "description": "Semaforo visivo per lo stato di Claude Code",
-  "version": "1.6.0",
+  "version": "1.8.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -41,20 +41,25 @@
     "configuration": {
       "title": "Claude Status",
       "properties": {
-        "claudeSemaforo.notifications.enabled": {
-          "type": "boolean",
-          "default": true,
-          "markdownDescription": "Show a desktop notification when Claude's status changes."
+        "claudeSemaforo.notifications.when": {
+          "type": "string",
+          "enum": [
+            "always",
+            "whenUnfocused",
+            "never"
+          ],
+          "enumDescriptions": [
+            "Always notify, even when the VSCode window is focused",
+            "Only when the VSCode window is not in the foreground",
+            "Never notify"
+          ],
+          "default": "always",
+          "markdownDescription": "When to show a desktop notification on status change."
         },
         "claudeSemaforo.notifications.sound": {
           "type": "boolean",
           "default": true,
           "markdownDescription": "Play a sound with the notification."
-        },
-        "claudeSemaforo.notifications.onlyWhenUnfocused": {
-          "type": "boolean",
-          "default": true,
-          "markdownDescription": "Only notify when the VSCode window is **not focused** (so you notice while working in another app). Turn off to always notify."
         },
         "claudeSemaforo.notifications.states": {
           "type": "array",
@@ -77,6 +82,12 @@
           },
           "uniqueItems": true,
           "markdownDescription": "Which status changes trigger a notification."
+        },
+        "claudeSemaforo.staleWorkingTimeoutSeconds": {
+          "type": "number",
+          "default": 120,
+          "minimum": 0,
+          "markdownDescription": "Safety net for interruptions: Claude Code emits no hook when you interrupt (Esc), so the light would stay 🔴 forever. If the status stays **working** for this many seconds without any update **and no tool is running**, it's treated as finished (🟢). A running tool (e.g. a long build) still stays 🔴. Set to `0` to disable."
         }
       }
     }

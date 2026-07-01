@@ -65,7 +65,9 @@ function getStateFilePaths(): string[] {
 }
 
 // ── Lettura stato dal file ─────────────────────────────────────────────────
-function readStateFromFile(): SemaforoState {
+interface RawState { status: SemaforoState; event: string; ageMs: number; }
+
+function readRawState(): RawState {
   for (const filePath of getStateFilePaths()) {
     try {
       if (!fs.existsSync(filePath)) continue;
@@ -75,21 +77,44 @@ function readStateFromFile(): SemaforoState {
       try {
         const json = JSON.parse(content);
         const s = (json.status ?? json.state ?? '').toLowerCase();
-        if (s.includes('think') || s.includes('work') || s.includes('run') || s === 'busy') return 'working';
-        if (s.includes('wait') || s.includes('confirm') || s.includes('input')) return 'waiting';
-        if (s === 'idle' || s === 'ready' || s === 'done') return 'idle';
+        let status: SemaforoState | null = null;
+        if (s.includes('think') || s.includes('work') || s.includes('run') || s === 'busy') { status = 'working'; }
+        else if (s.includes('wait') || s.includes('confirm') || s.includes('input')) { status = 'waiting'; }
+        else if (s === 'idle' || s === 'ready' || s === 'done') { status = 'idle'; }
+        if (status) {
+          const ts = Date.parse(json.timestamp ?? '');
+          const ageMs = isNaN(ts) ? 0 : Math.max(0, Date.now() - ts);
+          return { status, event: String(json.event ?? ''), ageMs };
+        }
       } catch {
         // Non è JSON — trattalo come stringa semplice
         const s = content.toLowerCase();
-        if (s === 'working' || s === 'busy' || s === 'running') return 'working';
-        if (s === 'waiting' || s === 'confirm') return 'waiting';
-        if (s === 'idle' || s === 'ready') return 'idle';
+        if (s === 'working' || s === 'busy' || s === 'running') { return { status: 'working', event: '', ageMs: 0 }; }
+        if (s === 'waiting' || s === 'confirm') { return { status: 'waiting', event: '', ageMs: 0 }; }
+        if (s === 'idle' || s === 'ready') { return { status: 'idle', event: '', ageMs: 0 }; }
       }
     } catch {
       // file non leggibile, prova il prossimo
     }
   }
-  return 'offline';
+  return { status: 'offline', event: '', ageMs: 0 };
+}
+
+// Risolve lo stato da mostrare. Claude Code non emette alcun hook quando
+// interrompi un'azione (Esc): il file resta su "working" e il semaforo
+// resterebbe rosso per sempre. Come rete di sicurezza, se "working" non si
+// aggiorna da troppo tempo E non c'è un tool in esecuzione (PreToolUse), lo
+// consideriamo terminato → idle. Un tool lungo (build) resta quindi rosso.
+// Ritorna anche `stale` per non generare notifiche su questa transizione.
+function resolveState(): { state: SemaforoState; stale: boolean } {
+  const raw = readRawState();
+  if (raw.status !== 'working') { return { state: raw.status, stale: false }; }
+  const timeoutSec = vscode.workspace.getConfiguration('claudeSemaforo')
+    .get<number>('staleWorkingTimeoutSeconds', 120);
+  if (timeoutSec > 0 && raw.event !== 'PreToolUse' && raw.ageMs > timeoutSec * 1000) {
+    return { state: 'idle', stale: true };
+  }
+  return { state: 'working', stale: false };
 }
 
 // ── HTML del semaforo (usato dalla vista laterale) ────────────────────────
@@ -355,15 +380,16 @@ export function activate(context: vscode.ExtensionContext) {
   const notifyTitle = folderName ? `Claude Status — ${folderName}` : 'Claude Status';
 
   // Stato iniziale come baseline (nessuna notifica all'avvio).
-  let lastState: SemaforoState = readStateFromFile();
+  let lastState: SemaforoState = resolveState().state;
   updateUI(lastState);
 
   // Decide se inviare la notifica di sistema per il nuovo stato, leggendo le
   // impostazioni utente a runtime (i cambi valgono subito, senza reload).
   function maybeNotify(next: SemaforoState) {
     const cfg = vscode.workspace.getConfiguration('claudeSemaforo');
-    if (!cfg.get<boolean>('notifications.enabled', true)) { return; }
-    if (cfg.get<boolean>('notifications.onlyWhenUnfocused', true) && vscode.window.state.focused) { return; }
+    const when = cfg.get<string>('notifications.when', 'always');
+    if (when === 'never') { return; }
+    if (when === 'whenUnfocused' && vscode.window.state.focused) { return; }
     const states = cfg.get<string[]>('notifications.states', ['waiting', 'idle']);
     if (!states.includes(next)) { return; }
     const sound = cfg.get<boolean>('notifications.sound', true);
@@ -371,15 +397,22 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   // Applica un nuovo stato: aggiorna la UI e valuta la notifica.
-  function applyState(next: SemaforoState) {
+  // `allowNotify` è false per le transizioni derivate dal timeout di
+  // "working stantio" (interruzione), che non devono suonare/notificare.
+  function applyState(next: SemaforoState, allowNotify: boolean) {
     if (next === lastState) { return; }
     lastState = next;
     updateUI(next);
-    maybeNotify(next);
+    if (allowNotify) { maybeNotify(next); }
+  }
+
+  function refresh() {
+    const { state, stale } = resolveState();
+    applyState(state, !stale);
   }
 
   // Polling ogni secondo
-  const timer = setInterval(() => applyState(readStateFromFile()), 1000);
+  const timer = setInterval(refresh, 1000);
 
   // Assicura l'esistenza della cartella di stato così il watcher si aggancia
   // subito (senza attendere che l'hook la crei alla prima scrittura).
@@ -391,7 +424,7 @@ export function activate(context: vscode.ExtensionContext) {
     try {
       const dir = path.dirname(fp);
       if (fs.existsSync(dir)) {
-        const w = fs.watch(dir, () => applyState(readStateFromFile()));
+        const w = fs.watch(dir, refresh);
         watchers.push(w);
       }
     } catch { /* directory non accessibile */ }

@@ -1,0 +1,10 @@
+# Dependencies
+node_modules/
+
+# Build output (rigenerato da `npm run compile`)
+out/
+
+# Artefatti impacchettati (allegati alle release, non versionati)
+*.vsix
+*.zip
+dist/
