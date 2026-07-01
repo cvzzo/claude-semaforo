@@ -1,0 +1,94 @@
+========================================================================
+  CLAUDE SEMAFORO v1.6.0 -- Install guide (Windows / Linux / macOS)
+========================================================================
+
+A visual traffic light for Claude Code's status inside VSCode:
+  RED    = Claude is working
+  AMBER  = Claude needs you (permission or question)
+  GREEN  = ready, you can type a new prompt
+  GREY   = no active session in this project
+
+You also get a native DESKTOP NOTIFICATION when the status changes AND
+the VSCode window is NOT focused (so you notice while working elsewhere).
+It fires only for "waiting" (Claude needs you) and "idle" (Claude ready).
+You can tweak this in Settings (search "Claude Status"):
+  - notifications.enabled          (on/off, default on)
+  - notifications.sound            (play a sound, default on)
+  - notifications.onlyWhenUnfocused (default on)
+  - notifications.states           (default: waiting, idle)
+
+The amber (waiting) light BLINKS to grab your attention; red breathes
+gently; green and grey stay steady.
+
+Archive contents:
+  - claude-semaforo-1.6.0.vsix       -> the VSCode extension
+  - claude-state-hook.js             -> the hook that writes the status
+  - claude-settings-example.json     -> example hook configuration
+  - INSTALL.txt                      -> this guide
+
+The .vsix alone only shows the UI. You ALSO need the hook and the
+settings, otherwise the light stays grey.
+
+Requirement: Node.js must be installed and on your PATH (the hook runs
+with `node`).
+
+------------------------------------------------------------------------
+ 1) INSTALL THE EXTENSION
+------------------------------------------------------------------------
+From a terminal, in the folder where you extracted this archive:
+
+    code --install-extension claude-semaforo-1.6.0.vsix
+
+(or in VSCode: Extensions -> "..." menu -> Install from VSIX...)
+
+------------------------------------------------------------------------
+ 2) COPY THE HOOK INTO ~/.claude/hooks/
+------------------------------------------------------------------------
+Windows (PowerShell):
+
+    New-Item -ItemType Directory -Force "$HOME\.claude\hooks"
+    Copy-Item claude-state-hook.js "$HOME\.claude\hooks\"
+
+Linux / macOS:
+
+    mkdir -p ~/.claude/hooks
+    cp claude-state-hook.js ~/.claude/hooks/
+
+------------------------------------------------------------------------
+ 3) CONFIGURE THE HOOKS IN ~/.claude/settings.json
+------------------------------------------------------------------------
+If you DON'T have a settings.json yet, just copy the example:
+
+    Windows:  Copy-Item claude-settings-example.json "$HOME\.claude\settings.json"
+    Linux:    cp claude-settings-example.json ~/.claude/settings.json
+
+If you ALREADY have a settings.json, open claude-settings-example.json
+and MERGE its "hooks" section into your own settings.json (keep your
+existing settings).
+
+The 7 configured events:
+    SessionStart, UserPromptSubmit, PreToolUse, PermissionRequest,
+    PostToolUse, Stop, Notification
+
+NOTE: the hook command is written as
+    node -e "require(require('os').homedir()+'/.claude/hooks/claude-state-hook.js')" <Event>
+This is intentional so it works IDENTICALLY on Windows and Linux
+(Node resolves the home directory, not the shell).
+
+------------------------------------------------------------------------
+ 4) RESTART
+------------------------------------------------------------------------
+  - Restart Claude Code   (to load the hooks)
+  - Reload VSCode         (Developer: Reload Window)
+
+You'll find the traffic light:
+  - as an ICON in the sidebar (activity bar) -> graphical view
+  - in the STATUS BAR at the bottom-left -> compact status
+
+------------------------------------------------------------------------
+ PER-PROJECT STATE
+------------------------------------------------------------------------
+Each window/project has its own independent light (the state is written
+to <tmp>/claude-semaforo/<hash-of-folder>.json). Two Claude sessions in
+the SAME folder share the same state.
+========================================================================

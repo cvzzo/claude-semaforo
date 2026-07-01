@@ -1,0 +1,94 @@
+{
+  "name": "claude-semaforo",
+  "displayName": "Claude Status",
+  "description": "Semaforo visivo per lo stato di Claude Code",
+  "version": "1.6.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "claudeSemaforo",
+          "title": "Claude Status",
+          "icon": "media/semaforo.svg"
+        }
+      ]
+    },
+    "views": {
+      "claudeSemaforo": [
+        {
+          "type": "webview",
+          "id": "claudeSemaforo.view",
+          "name": "Status"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "claudeSemaforo.showPanel",
+        "title": "Claude Status: Show in sidebar"
+      }
+    ],
+    "configuration": {
+      "title": "Claude Status",
+      "properties": {
+        "claudeSemaforo.notifications.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show a desktop notification when Claude's status changes."
+        },
+        "claudeSemaforo.notifications.sound": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Play a sound with the notification."
+        },
+        "claudeSemaforo.notifications.onlyWhenUnfocused": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Only notify when the VSCode window is **not focused** (so you notice while working in another app). Turn off to always notify."
+        },
+        "claudeSemaforo.notifications.states": {
+          "type": "array",
+          "default": [
+            "waiting",
+            "idle"
+          ],
+          "items": {
+            "type": "string",
+            "enum": [
+              "working",
+              "waiting",
+              "idle"
+            ],
+            "enumDescriptions": [
+              "🔴 Claude is working",
+              "🟠 Claude needs you (permission / question)",
+              "🟢 Claude is ready"
+            ]
+          },
+          "uniqueItems": true,
+          "markdownDescription": "Which status changes trigger a notification."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.0.0"
+  }
+}

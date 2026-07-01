@@ -1,0 +1,7 @@
+dist/**
+*.vsix
+*.zip
+node_modules/**
+.vscode-test/**
+.git/**
+**/*.map
