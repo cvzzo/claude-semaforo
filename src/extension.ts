@@ -375,6 +375,70 @@ const NOTIFY_TEXT: Record<SemaforoState, string> = {
   offline: 'Claude Code is not active',
 };
 
+// ── Auto-provisioning degli hook di Claude Code ───────────────────────────
+// Utile soprattutto su nuove macchine e ambienti remoti: installando il .vsix
+// (lato workspace), l'estensione mette da sola l'hook in ~/.claude/hooks/ e può
+// configurare ~/.claude/settings.json. Così non serve copiare nulla a mano.
+const HOOK_EVENTS = [
+  'SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse',
+  'PermissionRequest', 'PostToolUse', 'Stop', 'Notification', 'SubagentStop',
+];
+const HOOK_FILE = path.join(os.homedir(), '.claude', 'hooks', 'claude-state-hook.js');
+const SETTINGS_FILE = path.join(os.homedir(), '.claude', 'settings.json');
+
+function hookCommand(ev: string): string {
+  return `node -e "require(require('os').homedir()+'/.claude/hooks/claude-state-hook.js')" ${ev}`;
+}
+
+// Copia l'hook impacchettato in ~/.claude/hooks/. Con force=false non
+// sovrascrive un file già presente (rispetta eventuali personalizzazioni).
+function installHookFile(extensionPath: string, force: boolean): boolean {
+  try {
+    if (!force && fs.existsSync(HOOK_FILE)) { return false; }
+    fs.mkdirSync(path.dirname(HOOK_FILE), { recursive: true });
+    fs.copyFileSync(path.join(extensionPath, 'claude-state-hook.js'), HOOK_FILE);
+    return true;
+  } catch { return false; }
+}
+
+// Sono già configurati i nostri hook in settings.json?
+function settingsConfigured(): boolean {
+  try {
+    const j = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+    return HOOK_EVENTS.some(ev => JSON.stringify(j?.hooks?.[ev] ?? '').includes('claude-state-hook.js'));
+  } catch { return false; }
+}
+
+// Aggiunge i nostri hook a settings.json preservando il resto. SICUREZZA: se il
+// file esiste ma non è JSON valido (es. commenti), NON lo tocca.
+function mergeSettingsHooks(): { ok: boolean; reason?: string } {
+  let raw = '';
+  const existed = fs.existsSync(SETTINGS_FILE);
+  if (existed) {
+    try { raw = fs.readFileSync(SETTINGS_FILE, 'utf8'); } catch { return { ok: false, reason: 'settings.json non leggibile.' }; }
+  }
+  let j: any = {};
+  if (raw.trim()) {
+    try { j = JSON.parse(raw); }
+    catch { return { ok: false, reason: 'settings.json non è JSON valido (forse contiene commenti): aggiungi gli hook a mano.' }; }
+  }
+  if (typeof j !== 'object' || j === null || Array.isArray(j)) { return { ok: false, reason: 'formato di settings.json inatteso.' }; }
+  if (!j.hooks || typeof j.hooks !== 'object') { j.hooks = {}; }
+  for (const ev of HOOK_EVENTS) {
+    const arr: any[] = Array.isArray(j.hooks[ev]) ? j.hooks[ev] : (j.hooks[ev] = []);
+    if (!JSON.stringify(arr).includes('claude-state-hook.js')) {
+      arr.push({ matcher: '', hooks: [{ type: 'command', command: hookCommand(ev) }] });
+    }
+  }
+  try {
+    fs.mkdirSync(path.dirname(SETTINGS_FILE), { recursive: true });
+    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(j, null, 2), 'utf8');
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, reason: e?.message ?? String(e) };
+  }
+}
+
 // ── Attivazione estensione ─────────────────────────────────────────────────
 export function activate(context: vscode.ExtensionContext) {
   // Status bar item (sempre visibile in basso)
@@ -409,6 +473,32 @@ export function activate(context: vscode.ExtensionContext) {
       vscode.commands.executeCommand('claudeSemaforo.view.focus');
     })
   );
+
+  // Auto-provisioning: su questa macchina (anche remota) assicura l'hook.
+  installHookFile(context.extensionPath, false);
+
+  // Comando per installare/riconfigurare hook + settings su questa macchina.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claudeSemaforo.setupHooks', () => {
+      installHookFile(context.extensionPath, true);
+      const res = mergeSettingsHooks();
+      if (res.ok) {
+        vscode.window.showInformationMessage('🚦 Hook di Claude Code configurati in ~/.claude. Riavvia le sessioni Claude Code per attivarli.');
+      } else {
+        vscode.window.showWarningMessage(`🚦 Hook installato, ma non ho toccato settings.json: ${res.reason} Vedi claude-settings-example.json.`);
+      }
+    })
+  );
+
+  // Se gli hook non risultano configurati, proponi la configurazione one-click.
+  if (!settingsConfigured()) {
+    vscode.window.showInformationMessage(
+      '🚦 Claude Status: gli hook di Claude Code non sono configurati su questa macchina. Il semaforo resterà offline finché non lo fai.',
+      'Configura ora'
+    ).then(choice => {
+      if (choice === 'Configura ora') { vscode.commands.executeCommand('claudeSemaforo.setupHooks'); }
+    });
+  }
 
   // Titolo notifica: include il nome della cartella così, con più progetti,
   // capisci a colpo d'occhio quale sessione è cambiata.

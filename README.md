@@ -58,6 +58,20 @@ Trovi il semaforo in due punti:
 - l'**icona nella barra laterale** (activity bar): cliccala per aprire il pannello grafico del semaforo, che resta agganciato lì come una vista (non come tab dell'editor);
 - la **status bar in basso a sinistra**: mostra lo stato in forma compatta; cliccandola metti a fuoco la vista laterale.
 
+### Auto-configurazione (e ambienti remoti: SSH / Coder / container)
+
+All'avvio l'estensione **installa da sola l'hook** in `~/.claude/hooks/` (se
+manca) e, se `settings.json` non contiene gli hook, mostra un avviso con il
+pulsante **"Configura ora"**. Puoi anche lanciare manualmente il comando
+**"Claude Status: Set up Claude Code hooks (this machine)"** dalla palette
+(`Ctrl/Cmd+Shift+P`): copia l'hook e unisce gli hook a `settings.json`
+preservando il resto (se il file non è JSON valido, non lo tocca).
+
+> **Remoti:** su Coder/SSH/container il tuo `~/.claude` è quello **della
+> macchina remota**, non del PC locale. L'estensione è marcata `workspace`,
+> quindi gira lato remoto: **installala nel remoto** ("Install in SSH/Coder: …")
+> e usa "Configura ora". Poi riavvia le sessioni Claude Code sul remoto.
+
 ---
 
 ## Come funziona
@@ -65,10 +79,10 @@ Trovi il semaforo in due punti:
 ```
 Claude Code lavora
     → lancia hook (UserPromptSubmit / PreToolUse / PermissionRequest / …)
-    → claude-state-hook.js scrive <tmpdir>/claude-semaforo/<hash(cwd)>.json
+    → claude-state-hook.js scrive <tmpdir>/claude-semaforo/<hash(cwd)>/<session_id>.json
       (Windows: %TEMP%  ·  Linux: /tmp  ·  macOS: /var/folders/…)
-    → l'estensione VSCode legge il file della PROPRIA cartella (workspace)
-      ogni secondo (+ file watcher) → aggiorna status bar e vista laterale
+    → l'estensione VSCode legge TUTTE le sessioni della PROPRIA cartella
+      ogni secondo (+ file watcher) → aggrega e aggiorna status bar e vista
 ```
 
 ### Più sessioni Claude in parallelo

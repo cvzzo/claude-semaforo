@@ -2,12 +2,15 @@
   "name": "claude-semaforo",
   "displayName": "Claude Status",
   "description": "Semaforo visivo per lo stato di Claude Code",
-  "version": "1.9.1",
+  "version": "1.10.0",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
     "Other"
+  ],
+  "extensionKind": [
+    "workspace"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -36,6 +39,10 @@
       {
         "command": "claudeSemaforo.showPanel",
         "title": "Claude Status: Show in sidebar"
+      },
+      {
+        "command": "claudeSemaforo.setupHooks",
+        "title": "Claude Status: Set up Claude Code hooks (this machine)"
       }
     ],
     "configuration": {
