@@ -1,8 +1,27 @@
 {
   "name": "claude-semaforo",
   "displayName": "Claude Status",
-  "description": "Semaforo visivo per lo stato di Claude Code",
-  "version": "1.14.0",
+  "description": "Visual traffic-light status for Claude Code, with per-session dots and desktop/Telegram notifications.",
+  "version": "1.15.0",
+  "publisher": "cvzzo",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cvzzo/claude-semaforo.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cvzzo/claude-semaforo/issues"
+  },
+  "homepage": "https://github.com/cvzzo/claude-semaforo#readme",
+  "keywords": [
+    "claude",
+    "claude code",
+    "status",
+    "traffic light",
+    "notifications",
+    "telegram"
+  ],
   "engines": {
     "vscode": "^1.85.0"
   },
