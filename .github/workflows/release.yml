@@ -20,7 +20,11 @@ jobs:
           node-version: '20'
 
       - name: Install deps
-        run: npm install
+        # Il package-lock punta a un registry privato interno (non raggiungibile
+        # dai runner GitHub): lo ignoriamo e installiamo dal registry pubblico.
+        run: |
+          rm -f package-lock.json
+          npm install --registry=https://registry.npmjs.org --no-audit --no-fund
 
       - name: Compile
         run: npm run compile
