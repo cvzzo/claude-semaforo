@@ -1,0 +1,60 @@
+========================================================================
+  CLAUDE STATUS -- Install guide (Windows / Linux / macOS)
+========================================================================
+
+A visual traffic light for Claude Code's status inside VSCode:
+  RED    = Claude is working
+  AMBER  = Claude needs you (permission or question)
+  GREEN  = ready, you can type a new prompt
+  GREY   = no active session
+
+This archive contains:
+  - claude-semaforo-<version>.vsix   -> the VSCode extension
+  - claude-state-hook.js             -> the hook that writes the status
+  - claude-settings-example.json     -> example hook configuration
+  - INSTALL.txt                      -> this guide
+
+Requirement: Node.js on PATH (the hook runs with `node`). VSCode >= 1.85.
+
+------------------------------------------------------------------------
+ 1) INSTALL THE EXTENSION
+------------------------------------------------------------------------
+    code --install-extension claude-semaforo-<version>.vsix
+(or in VSCode: Extensions -> "..." -> Install from VSIX...)
+
+------------------------------------------------------------------------
+ 2) SET UP THE HOOKS (one click)
+------------------------------------------------------------------------
+After installing, run from the Command Palette (Ctrl/Cmd+Shift+P):
+    "Claude Status: Set up Claude Code hooks (this machine)"
+or click "Configura ora" on the prompt. It copies the hook into
+~/.claude/hooks/ and merges the hook config into ~/.claude/settings.json
+(it won't touch settings.json if it isn't valid JSON).
+
+REMOTE (SSH / Coder / container): install the extension ON THE REMOTE,
+then run that command there. Restart the remote Claude sessions after.
+
+Manual alternative:
+  - copy claude-state-hook.js into ~/.claude/hooks/
+  - merge the "hooks" section of claude-settings-example.json into
+    ~/.claude/settings.json
+
+------------------------------------------------------------------------
+ 3) RESTART
+------------------------------------------------------------------------
+  - Restart Claude Code   (hooks load at session start)
+  - Reload VSCode          (Developer: Reload Window)
+
+The traffic light appears as an icon in the sidebar (activity bar) and
+in the status bar (bottom-left).
+
+------------------------------------------------------------------------
+ NOTES
+------------------------------------------------------------------------
+- Multiple sessions (even same window) are tracked independently:
+  aggregate beacon + one dot per session. Name a session with the env
+  var CLAUDE_STATUS_NAME="Frontend" claude, or the "Rename a session" cmd.
+- Desktop notifications (with sound) + optional Telegram notifications
+  (command "Claude Status: Configure Telegram notifications").
+- Settings: search "Claude Status" in VSCode Settings.
+========================================================================
