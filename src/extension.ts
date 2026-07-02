@@ -63,9 +63,9 @@ function sessionDirs(): string[] {
 const LEGACY_FILE = path.join(os.tmpdir(), 'claude-code-state.json');
 
 // ── Lettura stato di UNA sessione ──────────────────────────────────────────
-interface Session { key: string; state: SemaforoState; stale: boolean; }
+interface Session { key: string; state: SemaforoState; stale: boolean; name: string; }
 
-function parseStateFile(filePath: string): { status: SemaforoState; event: string; ageMs: number } | null {
+function parseStateFile(filePath: string): { status: SemaforoState; event: string; ageMs: number; name: string } | null {
   try {
     const json = JSON.parse(fs.readFileSync(filePath, 'utf8').trim());
     const s = (json.status ?? json.state ?? '').toLowerCase();
@@ -76,10 +76,19 @@ function parseStateFile(filePath: string): { status: SemaforoState; event: strin
     if (!status) { return null; }
     const ts = Date.parse(json.timestamp ?? '');
     const ageMs = isNaN(ts) ? 0 : Math.max(0, Date.now() - ts);
-    return { status, event: String(json.event ?? ''), ageMs };
+    return { status, event: String(json.event ?? ''), ageMs, name: String(json.name ?? '') };
   } catch {
     return null;
   }
+}
+
+// Nome custom per session_id, impostato via comando (override dell'env).
+function sessionNameOverrides(): Record<string, string> {
+  const f = readStatusFile();
+  return (f && typeof f.sessionNames === 'object' && f.sessionNames) ? f.sessionNames : {};
+}
+function sessionIdFromKey(key: string): string {
+  return path.basename(key).replace(/\.json$/i, '');
 }
 
 // Rete di sicurezza per le interruzioni (Esc non emette hook): se "working"
@@ -100,6 +109,8 @@ function readSessions(): Session[] {
   const deadMin = cfg.get<number>('sessionTimeoutMinutes', 10);
   const out: Session[] = [];
   const dirs = sessionDirs();
+  const overrides = sessionNameOverrides();
+  const nameFor = (key: string, envName: string) => overrides[sessionIdFromKey(key)] || envName || '';
 
   if (dirs.length > 0) {
     for (const dir of dirs) {
@@ -116,7 +127,8 @@ function readSessions(): Session[] {
           continue;
         }
         const r = resolveSessionState(raw, timeoutSec);
-        out.push({ key: `${dir}/${f}`, state: r.state, stale: r.stale });
+        const key = `${dir}/${f}`;
+        out.push({ key, state: r.state, stale: r.stale, name: nameFor(key, raw.name) });
       }
     }
   } else {
@@ -124,7 +136,7 @@ function readSessions(): Session[] {
     const raw = parseStateFile(LEGACY_FILE);
     if (raw) {
       const r = resolveSessionState(raw, timeoutSec);
-      out.push({ key: 'legacy', state: r.state, stale: r.stale });
+      out.push({ key: 'legacy', state: r.state, stale: r.stale, name: raw.name || '' });
     }
   }
   // Ordine stabile (per chiave) → numerazione dei pallini coerente tra i refresh.
@@ -143,7 +155,7 @@ function aggregateState(sessions: Session[]): SemaforoState {
 // ── HTML del semaforo (usato dalla vista laterale) ────────────────────────
 // `aggregate` = stato più urgente (colore del beacon); `sessions` = stato di
 // ogni sessione Claude aperta (un pallino ciascuno).
-function getSemaforoHtml(aggregate: SemaforoState, sessions: SemaforoState[]): string {
+function getSemaforoHtml(aggregate: SemaforoState, sessions: { state: SemaforoState; name: string }[]): string {
   const S: Record<SemaforoState, { color: string; msg: string; sub: string }> = {
     working: { color: '#ff453a', msg: 'Claude is working', sub: 'Processing — please wait' },
     waiting: { color: '#ff9f0a', msg: 'Claude needs you', sub: 'Waiting for your input' },
@@ -152,6 +164,7 @@ function getSemaforoHtml(aggregate: SemaforoState, sessions: SemaforoState[]): s
   };
   const agg = S[aggregate];
   const dotClass: Record<SemaforoState, string> = { working: 'red', waiting: 'amber', idle: 'green', offline: 'grey' };
+  const esc = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
   const n = sessions.length;
 
   let label = agg.msg;
@@ -160,15 +173,18 @@ function getSemaforoHtml(aggregate: SemaforoState, sessions: SemaforoState[]): s
     label = S.offline.msg; sub = S.offline.sub;
   } else if (n > 1) {
     const c: Record<string, number> = { waiting: 0, working: 0, idle: 0 };
-    sessions.forEach(st => { if (st in c) { c[st]++; } });
+    sessions.forEach(s => { if (s.state in c) { c[s.state]++; } });
     const words: Record<string, string> = { waiting: 'waiting', working: 'working', idle: 'ready' };
     const parts = (['waiting', 'working', 'idle'] as const).filter(k => c[k] > 0).map(k => `${c[k]} ${words[k]}`);
     sub = `${n} sessions · ${parts.join(' · ')}`;
+  } else if (n === 1 && sessions[0].name) {
+    label = `${sessions[0].name}: ${agg.msg}`;
   }
   const word: Record<SemaforoState, string> = { working: 'working', waiting: 'needs you', idle: 'ready', offline: 'offline' };
-  const dots = sessions.map((st, i) => {
-    const num = sessions.length > 1 ? `<span class="n">${i + 1}</span>` : '';
-    return `<span class="chip" title="Session ${i + 1}: ${word[st]}"><span class="d ${dotClass[st]}"></span>${num}</span>`;
+  const dots = sessions.map((s, i) => {
+    const num = sessions.length > 1 ? `<span class="n">${esc(s.name || String(i + 1))}</span>` : '';
+    const tip = `${s.name ? s.name + ' — ' : 'Session ' + (i + 1) + ': '}${word[s.state]}`;
+    return `<span class="chip" title="${esc(tip)}"><span class="d ${dotClass[s.state]}"></span>${num}</span>`;
   }).join('');
 
   return `<!DOCTYPE html>
@@ -311,7 +327,7 @@ class SemaforoViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'claudeSemaforo.view';
   private view?: vscode.WebviewView;
   private aggregate: SemaforoState = 'offline';
-  private sessions: SemaforoState[] = [];
+  private sessions: { state: SemaforoState; name: string }[] = [];
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
@@ -319,7 +335,7 @@ class SemaforoViewProvider implements vscode.WebviewViewProvider {
     webviewView.webview.html = getSemaforoHtml(this.aggregate, this.sessions);
   }
 
-  update(aggregate: SemaforoState, sessions: SemaforoState[]): void {
+  update(aggregate: SemaforoState, sessions: { state: SemaforoState; name: string }[]): void {
     this.aggregate = aggregate;
     this.sessions = sessions;
     if (this.view) {
@@ -417,6 +433,26 @@ function writeStatusFileTelegram(token: string, chatId: string): { ok: boolean; 
   }
   if (typeof j !== 'object' || j === null || Array.isArray(j)) { j = {}; }
   j.telegram = { enabled: true, botToken: token, chatId };
+  try {
+    fs.mkdirSync(path.dirname(STATUS_CONFIG_FILE), { recursive: true });
+    fs.writeFileSync(STATUS_CONFIG_FILE, JSON.stringify(j, null, 2), 'utf8');
+    return { ok: true };
+  } catch (e: any) { return { ok: false, reason: e?.message ?? String(e) }; }
+}
+
+// Salva/rimuove il nome custom di una sessione in claude-status.json (sicuro).
+function writeStatusFileSessionName(sessionId: string, name: string): { ok: boolean; reason?: string } {
+  let j: any = {};
+  if (fs.existsSync(STATUS_CONFIG_FILE)) {
+    let raw = '';
+    try { raw = fs.readFileSync(STATUS_CONFIG_FILE, 'utf8'); } catch { return { ok: false, reason: 'file non leggibile.' }; }
+    if (raw.trim()) {
+      try { j = JSON.parse(raw); } catch { return { ok: false, reason: 'claude-status.json non è JSON valido.' }; }
+    }
+  }
+  if (typeof j !== 'object' || j === null || Array.isArray(j)) { j = {}; }
+  if (!j.sessionNames || typeof j.sessionNames !== 'object') { j.sessionNames = {}; }
+  if (name) { j.sessionNames[sessionId] = name; } else { delete j.sessionNames[sessionId]; }
   try {
     fs.mkdirSync(path.dirname(STATUS_CONFIG_FILE), { recursive: true });
     fs.writeFileSync(STATUS_CONFIG_FILE, JSON.stringify(j, null, 2), 'utf8');
@@ -572,7 +608,7 @@ export function activate(context: vscode.ExtensionContext) {
     statusBar.text = n > 1 ? `${info.icon} ${info.label} ·${n}` : `${info.icon} ${info.label}`;
     statusBar.backgroundColor = info.color;
     statusBar.tooltip = n > 1 ? `${info.tooltip}  (${n} sessioni attive)` : info.tooltip;
-    viewProvider.update(agg, sessions.map(s => s.state));
+    viewProvider.update(agg, sessions.map(s => ({ state: s.state, name: s.name })));
   }
 
   // Comando per mettere a fuoco la vista laterale del semaforo
@@ -615,6 +651,34 @@ export function activate(context: vscode.ExtensionContext) {
       } else {
         vscode.window.showWarningMessage(`🚦 Hook installato, ma non ho toccato settings.json: ${res.reason} Vedi claude-settings-example.json.`);
       }
+    })
+  );
+
+  // Comando per assegnare un nome custom a una sessione (compare in tooltip e
+  // notifiche). Salva in ~/.claude/claude-status.json (sessionNames).
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claudeSemaforo.renameSession', async () => {
+      const sessions = readSessions();
+      if (!sessions.length) { vscode.window.showInformationMessage('🚦 Nessuna sessione attiva da rinominare.'); return; }
+      const items = sessions.map((s, i) => ({
+        label: s.name || `Sessione ${i + 1}`,
+        description: `${s.state} · ${sessionIdFromKey(s.key).slice(0, 8)}`,
+        key: s.key,
+        current: s.name,
+      }));
+      const pick = await vscode.window.showQuickPick(items, { title: 'Quale sessione rinominare?', ignoreFocusOut: true });
+      if (!pick) { return; }
+      const name = await vscode.window.showInputBox({
+        title: 'Nome sessione',
+        prompt: 'Lascia vuoto per rimuovere il nome',
+        value: pick.current,
+        ignoreFocusOut: true,
+      });
+      if (name === undefined) { return; }
+      const r = writeStatusFileSessionName(sessionIdFromKey(pick.key), name.trim().slice(0, 40));
+      if (!r.ok) { vscode.window.showErrorMessage(`🚦 ${r.reason}`); return; }
+      refresh();
+      vscode.window.showInformationMessage(name.trim() ? `🚦 Sessione rinominata: ${name.trim()}` : '🚦 Nome sessione rimosso.');
     })
   );
 
@@ -736,20 +800,24 @@ export function activate(context: vscode.ExtensionContext) {
   const lastSessionStates = new Map<string, SemaforoState>();
   const tgTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
+  // Prefisso per le notifiche: nome sessione (se presente) o cartella.
+  const label = (name: string) => name || folderName || '';
+
   // Toast desktop: immediato, governato da notifications.when + focus.
-  function notifyDesktop(next: SemaforoState) {
+  function notifyDesktop(next: SemaforoState, name: string) {
     const cfg = vscode.workspace.getConfiguration('claudeSemaforo');
     if (!cfg.get<string[]>('notifications.states', ['waiting', 'idle']).includes(next)) { return; }
     const when = cfg.get<string>('notifications.when', 'always');
     if (when === 'never') { return; }
     if (when === 'whenUnfocused' && vscode.window.state.focused) { return; }
-    notifyOS(notifyTitle, NOTIFY_TEXT[next], cfg.get<boolean>('notifications.sound', true));
+    const title = name ? `Claude Status — ${name}` : notifyTitle;
+    notifyOS(title, NOTIFY_TEXT[next], cfg.get<boolean>('notifications.sound', true));
   }
 
   // Telegram: RITARDATO. Parte solo se dopo N secondi lo stato della sessione è
   // ancora lo stesso (nessuna risposta / nuovo prompt nel frattempo). Ogni
   // cambio di stato azzera il timer pendente per quella sessione.
-  function scheduleTelegram(key: string, next: SemaforoState) {
+  function scheduleTelegram(key: string, next: SemaforoState, name: string) {
     const existing = tgTimers.get(key);
     if (existing) { clearTimeout(existing); tgTimers.delete(key); }
 
@@ -761,8 +829,9 @@ export function activate(context: vscode.ExtensionContext) {
     const delaySec = next === 'waiting' ? cfg.get<number>('telegram.waitingDelaySeconds', 10)
       : next === 'idle' ? cfg.get<number>('telegram.idleDelaySeconds', 30)
         : 0;
-    const suffix = folderName ? ` — ${folderName}` : '';
-    const send = () => sendTelegram(tg.botToken, tg.chatId, `${EMOJI[next]} ${NOTIFY_TEXT[next]}${suffix}`);
+    const tag = label(name);
+    const prefix = tag ? `${tag} — ` : '';
+    const send = () => sendTelegram(tg.botToken, tg.chatId, `${EMOJI[next]} ${prefix}${NOTIFY_TEXT[next]}`);
 
     if (delaySec <= 0) { send(); return; }
     const t = setTimeout(() => {
@@ -773,9 +842,9 @@ export function activate(context: vscode.ExtensionContext) {
     tgTimers.set(key, t);
   }
 
-  function onSessionChanged(key: string, next: SemaforoState) {
-    notifyDesktop(next);
-    scheduleTelegram(key, next);
+  function onSessionChanged(key: string, next: SemaforoState, name: string) {
+    notifyDesktop(next, name);
+    scheduleTelegram(key, next, name);
   }
 
   // Firma dello stato mostrato: aggiorniamo il webview SOLO quando cambia,
@@ -802,7 +871,7 @@ export function activate(context: vscode.ExtensionContext) {
       // Solo su un vero cambio (non alla scoperta della sessione, non sulle
       // transizioni derivate dal timeout anti-blocco).
       if (!baseline && prev !== undefined && prev !== s.state && !s.stale) {
-        onSessionChanged(s.key, s.state);
+        onSessionChanged(s.key, s.state, s.name);
       }
     }
     // Sessione sparita: dimenticala e annulla il suo timer Telegram in sospeso.

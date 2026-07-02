@@ -116,6 +116,18 @@ rimosso. Quindi una sessione chiusa "a freddo" sparisce comunque entro ~10 min.
 L'hook scrive anche `<tmpdir>/claude-code-state.json` (legacy condiviso), usato
 dall'estensione **solo** quando la finestra non ha alcuna cartella aperta.
 
+**Nome custom della sessione** (per notifiche più chiare, es. *"Frontend — Claude
+needs you"*), due modi:
+
+- **All'avvio** (deterministico): lancia Claude con la variabile d'ambiente
+  `CLAUDE_STATUS_NAME`, es. `CLAUDE_STATUS_NAME="Frontend" claude`.
+- **Dalla UI**: comando **"Claude Status: Rename a session"** → scegli la
+  sessione e digita il nome (salvato in `~/.claude/claude-status.json` →
+  `sessionNames`, ha priorità sull'env). Vuoto = rimuove il nome.
+
+Il nome compare nel **tooltip** del pallino e nelle **notifiche** (desktop e
+Telegram).
+
 ### Hook → Stato
 
 | Evento Claude Code  | Condizione               | Stato Semaforo |

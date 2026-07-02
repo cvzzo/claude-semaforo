@@ -2,7 +2,7 @@
   "name": "claude-semaforo",
   "displayName": "Claude Status",
   "description": "Semaforo visivo per lo stato di Claude Code",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -43,6 +43,10 @@
       {
         "command": "claudeSemaforo.setupHooks",
         "title": "Claude Status: Set up Claude Code hooks (this machine)"
+      },
+      {
+        "command": "claudeSemaforo.renameSession",
+        "title": "Claude Status: Rename a session"
       },
       {
         "command": "claudeSemaforo.setupTelegram",

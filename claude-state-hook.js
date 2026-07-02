@@ -13,13 +13,12 @@
  *   - Linux   -> /tmp
  *   - macOS   -> /var/folders/...
  *
- * Evento, tool e cwd vengono determinati (in ordine di priorità) da:
- *   1. il JSON passato da Claude Code su stdin -> "hook_event_name" / "tool_name" / "cwd"
- *   2. gli argomenti CLI (es. `node claude-state-hook.js PreToolUse AskUserQuestion`)
- *   3. le variabili d'ambiente CLAUDE_HOOK_EVENT / TOOL_NAME e process.cwd()
+ * Evento, tool, cwd e session_id arrivano dal JSON su stdin (o dai fallback:
+ * argomenti CLI, variabili d'ambiente, process.cwd()).
+ * Nome sessione opzionale: variabile d'ambiente CLAUDE_STATUS_NAME.
  */
 
-// claude-status-hook-version: 3  (incrementare quando cambia la logica: l'estensione
+// claude-status-hook-version: 4  (incrementare quando cambia la logica: l'estensione
 // lo confronta con la versione impacchettata e propone l'aggiornamento se è più vecchia)
 
 const fs = require('fs');
@@ -120,12 +119,18 @@ if (event === 'SessionStart') {
   status = 'working';       // 🔴 subagente finito, il turno principale continua
 }
 
+// Nome custom della sessione, opzionale: lancia Claude con
+//   CLAUDE_STATUS_NAME="Frontend" claude
+// per etichettare la sessione (compare in tooltip e nelle notifiche).
+const name = String(process.env.CLAUDE_STATUS_NAME || '').slice(0, 40);
+
 const nowMs = Date.now();
 const payload = JSON.stringify({
   status,
   event,
   tool,
   cwd,
+  name,
   timestamp: new Date(nowMs).toISOString()
 });
 
