@@ -121,6 +121,8 @@ function readSessions(): Session[] {
       out.push({ key: 'legacy', state: r.state, stale: r.stale });
     }
   }
+  // Ordine stabile (per chiave) → numerazione dei pallini coerente tra i refresh.
+  out.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return out;
 }
 
@@ -157,7 +159,11 @@ function getSemaforoHtml(aggregate: SemaforoState, sessions: SemaforoState[]): s
     const parts = (['waiting', 'working', 'idle'] as const).filter(k => c[k] > 0).map(k => `${c[k]} ${words[k]}`);
     sub = `${n} sessions · ${parts.join(' · ')}`;
   }
-  const dots = sessions.map(st => `<span class="d ${dotClass[st]}"></span>`).join('');
+  const word: Record<SemaforoState, string> = { working: 'working', waiting: 'needs you', idle: 'ready', offline: 'offline' };
+  const dots = sessions.map((st, i) => {
+    const num = sessions.length > 1 ? `<span class="n">${i + 1}</span>` : '';
+    return `<span class="chip" title="Session ${i + 1}: ${word[st]}"><span class="d ${dotClass[st]}"></span>${num}</span>`;
+  }).join('');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -254,9 +260,12 @@ function getSemaforoHtml(aggregate: SemaforoState, sessions: SemaforoState[]): s
     .beacon { animation: none !important; }
   }
 
-  /* Pallini: uno per sessione Claude aperta, colore = stato della sessione. */
-  .dots { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; max-width: 200px; }
+  /* Pallini: uno per sessione Claude aperta, colore = stato della sessione,
+     con mini-etichetta numerata (mostrata solo con più sessioni). */
+  .dots { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 12px; max-width: 220px; }
   .dots:empty { display: none; }
+  .dots .chip { display: inline-flex; align-items: center; gap: 5px; }
+  .dots .n { font-size: 0.72rem; opacity: 0.6; font-variant-numeric: tabular-nums; }
   .dots .d { width: 10px; height: 10px; border-radius: 50%; }
   .dots .d.red   { background: var(--red);   box-shadow: 0 0 8px var(--red); }
   .dots .d.amber { background: var(--amber); box-shadow: 0 0 8px var(--amber); animation: blink 1.1s ease-in-out infinite; }
