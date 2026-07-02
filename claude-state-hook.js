@@ -93,25 +93,38 @@ if (event === 'SessionStart') {
   status = 'working';       // 🔴 subagente finito, il turno principale continua
 }
 
+const nowMs = Date.now();
 const payload = JSON.stringify({
   status,
   event,
   tool,
   cwd,
-  timestamp: new Date().toISOString()
+  timestamp: new Date(nowMs).toISOString()
 });
+
+// Scrittura con GUARDIA MONOTONICA: gli hook sono processi node separati e
+// l'ordine di scrittura può invertirsi rispetto all'ordine degli eventi (es.
+// PostToolUse che scrive dopo Stop → il file resterebbe su "working"/rosso).
+// Non sovrascriviamo mai un record con timestamp più recente del nostro.
+function writeState(file) {
+  try {
+    const prevTs = Date.parse(JSON.parse(fs.readFileSync(file, 'utf8')).timestamp);
+    if (!isNaN(prevTs) && prevTs > nowMs) { return; } // sul disco c'è già qualcosa di più recente
+  } catch { /* file assente o illeggibile: procedi */ }
+  fs.writeFileSync(file, payload, 'utf8');
+}
 
 // File PER-PROGETTO: <tmpdir>/claude-semaforo/<hash(cwd)>.json
 try {
   fs.mkdirSync(STATE_DIR, { recursive: true });
-  fs.writeFileSync(path.join(STATE_DIR, keyForPath(cwd) + '.json'), payload, 'utf8');
+  writeState(path.join(STATE_DIR, keyForPath(cwd) + '.json'));
 } catch (e) {
   process.stderr.write(`claude-state-hook (per-progetto) error: ${e.message}\n`);
 }
 
 // File LEGACY condiviso: fallback per finestre senza workspace corrispondente.
 try {
-  fs.writeFileSync(LEGACY_FILE, payload, 'utf8');
+  writeState(LEGACY_FILE);
 } catch (e) {
   process.stderr.write(`claude-state-hook (legacy) error: ${e.message}\n`);
 }

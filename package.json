@@ -2,7 +2,7 @@
   "name": "claude-semaforo",
   "displayName": "Claude Status",
   "description": "Semaforo visivo per lo stato di Claude Code",
-  "version": "1.8.0",
+  "version": "1.8.1",
   "engines": {
     "vscode": "^1.85.0"
   },
