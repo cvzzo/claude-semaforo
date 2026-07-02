@@ -390,6 +390,12 @@ function hookCommand(ev: string): string {
   return `node -e "require(require('os').homedir()+'/.claude/hooks/claude-state-hook.js')" ${ev}`;
 }
 
+// Versione logica dell'hook (marcatore nel file). 0 se assente/vecchio.
+function hookVersion(content: string): number {
+  const m = content.match(/claude-status-hook-version:\s*(\d+)/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
 // Copia l'hook impacchettato in ~/.claude/hooks/. Con force=false non
 // sovrascrive un file già presente (rispetta eventuali personalizzazioni).
 function installHookFile(extensionPath: string, force: boolean): boolean {
@@ -476,6 +482,26 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Auto-provisioning: su questa macchina (anche remota) assicura l'hook.
   installHookFile(context.extensionPath, false);
+
+  // Se l'hook installato è più VECCHIO di quello impacchettato, proponi l'update
+  // (così i fix si propagano senza reinstallare a mano su ogni macchina/remoto).
+  try {
+    if (fs.existsSync(HOOK_FILE)) {
+      const bundledV = hookVersion(fs.readFileSync(path.join(context.extensionPath, 'claude-state-hook.js'), 'utf8'));
+      const installedV = hookVersion(fs.readFileSync(HOOK_FILE, 'utf8'));
+      if (installedV < bundledV) {
+        vscode.window.showInformationMessage(
+          `🚦 Claude Status: hook aggiornato disponibile (v${installedV} → v${bundledV}).`,
+          'Aggiorna'
+        ).then(choice => {
+          if (choice === 'Aggiorna') {
+            installHookFile(context.extensionPath, true);
+            vscode.window.showInformationMessage('🚦 Hook aggiornato. Riavvia le sessioni Claude Code per applicarlo.');
+          }
+        });
+      }
+    }
+  } catch { /* ignora */ }
 
   // Comando per installare/riconfigurare hook + settings su questa macchina.
   context.subscriptions.push(

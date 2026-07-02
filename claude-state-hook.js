@@ -19,6 +19,9 @@
  *   3. le variabili d'ambiente CLAUDE_HOOK_EVENT / TOOL_NAME e process.cwd()
  */
 
+// claude-status-hook-version: 3  (incrementare quando cambia la logica: l'estensione
+// lo confronta con la versione impacchettata e propone l'aggiornamento se è più vecchia)
+
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
