@@ -167,8 +167,19 @@ Setup (guidato, **senza toccare il JSON**):
    **bot token**. Scrivi poi un messaggio qualsiasi al tuo nuovo bot.
 2. In VSCode: palette (`Ctrl/Cmd+Shift+P`) → **"Claude Status: Configure Telegram
    notifications"**. Incolla il token; il chat id lo **rileva da solo** (dai
-   messaggi che hai mandato al bot) oppure lo inserisci a mano. Scrive le
-   impostazioni utente e invia un messaggio di test.
+   messaggi che hai mandato al bot) oppure lo inserisci a mano. Infine scegli
+   **dove salvare**: impostazioni VSCode (questa macchina) oppure il file
+   `~/.claude/claude-status.json`. Poi invia un messaggio di test.
+
+**Dove vive la config Telegram:** l'estensione legge prima le impostazioni
+VSCode, poi come fallback il file `~/.claude/claude-status.json`:
+
+```json
+{ "telegram": { "enabled": true, "botToken": "…", "chatId": "…" } }
+```
+
+Il file è comodo sui **remoti/container**: lo configuri una volta (anche su un
+volume condiviso) e vale su tutte le sessioni, senza rifare il setup ovunque.
 
 Comandi correlati: **"Claude Status: Send a test Telegram message"** per un test
 al volo. In alternativa puoi impostare a mano `telegram.enabled/botToken/chatId`.

@@ -381,6 +381,49 @@ const NOTIFY_TEXT: Record<SemaforoState, string> = {
   offline: 'Claude Code is not active',
 };
 
+// ── Config Telegram: impostazioni VSCode con priorità, fallback su file ────
+// Il file ~/.claude/claude-status.json permette di configurare Telegram una
+// volta e riusarlo su tutte le macchine/remoti (anche su volume condiviso).
+const STATUS_CONFIG_FILE = path.join(os.homedir(), '.claude', 'claude-status.json');
+interface TelegramConfig { enabled: boolean; botToken: string; chatId: string; }
+
+function readStatusFile(): any {
+  try { return JSON.parse(fs.readFileSync(STATUS_CONFIG_FILE, 'utf8')); } catch { return {}; }
+}
+
+function getTelegramConfig(): TelegramConfig {
+  const cfg = vscode.workspace.getConfiguration('claudeSemaforo');
+  const file = readStatusFile();
+  const ft = (file && typeof file.telegram === 'object' && file.telegram) ? file.telegram : {};
+  // enabled: usa il valore VSCode solo se impostato esplicitamente, altrimenti il file.
+  const insp = cfg.inspect<boolean>('telegram.enabled');
+  const enabledSet = !!insp && (insp.globalValue !== undefined || insp.workspaceValue !== undefined || insp.workspaceFolderValue !== undefined);
+  const enabled = enabledSet ? cfg.get<boolean>('telegram.enabled', false) : (ft.enabled === true);
+  const botToken = cfg.get<string>('telegram.botToken', '') || String(ft.botToken || '');
+  const chatId = cfg.get<string>('telegram.chatId', '') || String(ft.chatId || '');
+  return { enabled, botToken, chatId };
+}
+
+// Salva la config Telegram nel file ~/.claude/claude-status.json preservando il
+// resto. SICUREZZA: se il file esiste ma non è JSON valido, non lo tocca.
+function writeStatusFileTelegram(token: string, chatId: string): { ok: boolean; reason?: string } {
+  let j: any = {};
+  if (fs.existsSync(STATUS_CONFIG_FILE)) {
+    let raw = '';
+    try { raw = fs.readFileSync(STATUS_CONFIG_FILE, 'utf8'); } catch { return { ok: false, reason: 'file non leggibile.' }; }
+    if (raw.trim()) {
+      try { j = JSON.parse(raw); } catch { return { ok: false, reason: 'claude-status.json non è JSON valido.' }; }
+    }
+  }
+  if (typeof j !== 'object' || j === null || Array.isArray(j)) { j = {}; }
+  j.telegram = { enabled: true, botToken: token, chatId };
+  try {
+    fs.mkdirSync(path.dirname(STATUS_CONFIG_FILE), { recursive: true });
+    fs.writeFileSync(STATUS_CONFIG_FILE, JSON.stringify(j, null, 2), 'utf8');
+    return { ok: true };
+  } catch (e: any) { return { ok: false, reason: e?.message ?? String(e) }; }
+}
+
 // ── Notifica Telegram (via Bot API) ───────────────────────────────────────
 // Utile per essere avvisato quando sei lontano dal PC. Fire-and-forget.
 // onDone (opzionale) riceve un eventuale errore, usato dal comando di test.
@@ -629,9 +672,23 @@ export function activate(context: vscode.ExtensionContext) {
         if (!chatId) { return; }
       }
 
-      await cfg().update('telegram.botToken', token, vscode.ConfigurationTarget.Global);
-      await cfg().update('telegram.chatId', chatId, vscode.ConfigurationTarget.Global);
-      await cfg().update('telegram.enabled', true, vscode.ConfigurationTarget.Global);
+      const where = await vscode.window.showQuickPick(
+        [
+          { label: 'Impostazioni VSCode', description: 'Questa macchina (sincronizzabile con Settings Sync)' },
+          { label: 'File ~/.claude/claude-status.json', description: 'Riusabile su tutti i remoti / volume condiviso' },
+        ],
+        { title: 'Dove salvare la configurazione Telegram?', ignoreFocusOut: true }
+      );
+      if (!where) { return; }
+
+      if (where.label.startsWith('File')) {
+        const r = writeStatusFileTelegram(token, chatId);
+        if (!r.ok) { vscode.window.showErrorMessage(`🚦 Telegram: ${r.reason}`); return; }
+      } else {
+        await cfg().update('telegram.botToken', token, vscode.ConfigurationTarget.Global);
+        await cfg().update('telegram.chatId', chatId, vscode.ConfigurationTarget.Global);
+        await cfg().update('telegram.enabled', true, vscode.ConfigurationTarget.Global);
+      }
       sendTelegram(token, chatId, '🚦 Claude Status: Telegram configurato ✓', err => {
         if (err) { vscode.window.showErrorMessage(`🚦 Telegram configurato, ma il test è fallito: ${err}`); }
         else { vscode.window.showInformationMessage('🚦 Telegram configurato e testato ✓'); }
@@ -642,10 +699,10 @@ export function activate(context: vscode.ExtensionContext) {
   // Comando per testare la configurazione Telegram.
   context.subscriptions.push(
     vscode.commands.registerCommand('claudeSemaforo.testTelegram', () => {
-      const cfg = vscode.workspace.getConfiguration('claudeSemaforo');
+      const tg = getTelegramConfig();
       sendTelegram(
-        cfg.get<string>('telegram.botToken', ''),
-        cfg.get<string>('telegram.chatId', ''),
+        tg.botToken,
+        tg.chatId,
         '🚦 Claude Status: test di notifica Telegram riuscito!',
         (err) => {
           if (err) {
@@ -690,14 +747,11 @@ export function activate(context: vscode.ExtensionContext) {
       notifyOS(notifyTitle, NOTIFY_TEXT[next], cfg.get<boolean>('notifications.sound', true));
     }
 
-    // Telegram (governato solo da telegram.enabled)
-    if (cfg.get<boolean>('telegram.enabled', false)) {
+    // Telegram (config: impostazioni VSCode con priorità, fallback su ~/.claude)
+    const tg = getTelegramConfig();
+    if (tg.enabled) {
       const suffix = folderName ? ` — ${folderName}` : '';
-      sendTelegram(
-        cfg.get<string>('telegram.botToken', ''),
-        cfg.get<string>('telegram.chatId', ''),
-        `${EMOJI[next]} ${NOTIFY_TEXT[next]}${suffix}`
-      );
+      sendTelegram(tg.botToken, tg.chatId, `${EMOJI[next]} ${NOTIFY_TEXT[next]}${suffix}`);
     }
   }
 
