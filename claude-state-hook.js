@@ -2,10 +2,11 @@
 /**
  * claude-state-hook.js — cross-platform (Windows + Linux + macOS)
  *
- * Stato PER-PROGETTO: scrive in <tmpdir>/claude-semaforo/<hash(cwd)>.json,
- * così sessioni Claude in cartelle diverse hanno semafori indipendenti.
- * Scrive anche <tmpdir>/claude-code-state.json (legacy) come fallback.
- * L'estensione VSCode "Claude Status" legge il file della propria cartella.
+ * Stato PER-SESSIONE: scrive in <tmpdir>/claude-semaforo/<hash(cwd)>/<session_id>.json,
+ * così più sessioni Claude (anche nella stessa cartella/finestra) restano
+ * indipendenti. Su SessionEnd il file della sessione viene rimosso.
+ * Scrive anche <tmpdir>/claude-code-state.json (legacy) come fallback per
+ * finestre senza workspace. L'estensione "Claude Status" aggrega le sessioni.
  *
  * <tmpdir> = os.tmpdir():
  *   - Windows -> %TEMP%  (es. C:\Users\<tu>\AppData\Local\Temp)
@@ -38,9 +39,15 @@ const WAITING_TOOLS = new Set(['AskUserQuestion']);
 
 // Eventi hook riconosciuti (per il parsing robusto degli argomenti CLI).
 const KNOWN_EVENTS = new Set([
-  'SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PermissionRequest',
-  'PostToolUse', 'Notification', 'Stop', 'SubagentStop'
+  'SessionStart', 'SessionEnd', 'UserPromptSubmit', 'PreToolUse',
+  'PermissionRequest', 'PostToolUse', 'Notification', 'Stop', 'SubagentStop'
 ]);
+
+// Chiave file per una sessione (session_id di Claude Code, ripulito).
+function sessionKeyFrom(id) {
+  const s = String(id || '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 64);
+  return s || 'default';
+}
 
 function readPayload() {
   // 1. stdin JSON — contratto ufficiale degli hook di Claude Code.
@@ -55,6 +62,7 @@ function readPayload() {
             event: String(data.hook_event_name),
             tool: String(data.tool_name || ''),
             cwd: String(data.cwd || process.cwd()),
+            session: String(data.session_id || ''),
           };
         }
       }
@@ -68,10 +76,26 @@ function readPayload() {
   const tool = args.find(a => WAITING_TOOLS.has(a)) || process.env.TOOL_NAME || '';
 
   // 3. variabili d'ambiente / cwd del processo come ultimo fallback
-  return { event, tool, cwd: process.env.CLAUDE_PROJECT_DIR || process.cwd() };
+  return {
+    event, tool,
+    cwd: process.env.CLAUDE_PROJECT_DIR || process.cwd(),
+    session: process.env.CLAUDE_SESSION_ID || '',
+  };
 }
 
-const { event, tool, cwd } = readPayload();
+const { event, tool, cwd, session } = readPayload();
+
+// Ogni sessione Claude ha il proprio file, in una sottocartella per-progetto:
+//   <tmpdir>/claude-semaforo/<hash(cwd)>/<session_id>.json
+// Così più sessioni nella stessa cartella/finestra restano indipendenti.
+const cwdDir = path.join(STATE_DIR, keyForPath(cwd));
+const sessionFile = path.join(cwdDir, sessionKeyFrom(session) + '.json');
+
+// A fine sessione, rimuovi il suo file: sparisce dal semaforo.
+if (event === 'SessionEnd') {
+  try { fs.unlinkSync(sessionFile); } catch { /* già assente */ }
+  process.exit(0);
+}
 
 let status = 'idle';
 if (event === 'SessionStart') {
@@ -114,12 +138,12 @@ function writeState(file) {
   fs.writeFileSync(file, payload, 'utf8');
 }
 
-// File PER-PROGETTO: <tmpdir>/claude-semaforo/<hash(cwd)>.json
+// File PER-SESSIONE: <tmpdir>/claude-semaforo/<hash(cwd)>/<session>.json
 try {
-  fs.mkdirSync(STATE_DIR, { recursive: true });
-  writeState(path.join(STATE_DIR, keyForPath(cwd) + '.json'));
+  fs.mkdirSync(cwdDir, { recursive: true });
+  writeState(sessionFile);
 } catch (e) {
-  process.stderr.write(`claude-state-hook (per-progetto) error: ${e.message}\n`);
+  process.stderr.write(`claude-state-hook (per-sessione) error: ${e.message}\n`);
 }
 
 // File LEGACY condiviso: fallback per finestre senza workspace corrispondente.

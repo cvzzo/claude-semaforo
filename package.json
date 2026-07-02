@@ -2,7 +2,7 @@
   "name": "claude-semaforo",
   "displayName": "Claude Status",
   "description": "Semaforo visivo per lo stato di Claude Code",
-  "version": "1.8.1",
+  "version": "1.9.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -88,6 +88,12 @@
           "default": 120,
           "minimum": 0,
           "markdownDescription": "Safety net for interruptions: Claude Code emits no hook when you interrupt (Esc), so the light would stay 🔴 forever. If the status stays **working** for this many seconds without any update **and no tool is running**, it's treated as finished (🟢). A running tool (e.g. a long build) still stays 🔴. Set to `0` to disable."
+        },
+        "claudeSemaforo.sessionTimeoutMinutes": {
+          "type": "number",
+          "default": 60,
+          "minimum": 0,
+          "markdownDescription": "Multi-session cleanup: a session whose state hasn't updated for this many minutes is treated as dead (e.g. Claude crashed without a `SessionEnd`) and dropped from the traffic light. Set to `0` to never drop."
         }
       }
     }

@@ -71,26 +71,36 @@ Claude Code lavora
       ogni secondo (+ file watcher) → aggiorna status bar e vista laterale
 ```
 
-### Stato per-progetto (più Claude in parallelo)
+### Più sessioni Claude in parallelo
 
-Ogni sessione scrive un file **separato**, con nome derivato dall'hash del suo
-`cwd`. Ogni finestra VSCode calcola lo stesso hash dalla propria cartella di
-workspace e legge **solo** il file corrispondente → semafori indipendenti per
-progetti diversi. Un progetto senza file risulta ⚪ **offline** (non mostra lo
-stato di un altro progetto). All'avvio di una sessione l'evento `SessionStart`
-crea subito il file → 🟢 verde.
+Ogni sessione Claude scrive un **file separato** in
+`<tmpdir>/claude-semaforo/<hash(cwd)>/<session_id>.json` (il `session_id`
+arriva dagli hook). Questo vale **anche per più sessioni nella stessa
+cartella/finestra**: restano indipendenti. All'avvio (`SessionStart`) il file
+viene creato (🟢); alla chiusura (`SessionEnd`) viene rimosso.
 
-L'hook scrive anche `<tmpdir>/claude-code-state.json` (legacy condiviso), ma
-l'estensione lo usa **solo** quando la finestra non ha alcuna cartella aperta.
+L'estensione legge **tutte** le sessioni della propria cartella di workspace e
+mostra:
+- un **beacon aggregato** = lo stato più **urgente** (🟠 se almeno una aspetta
+  te → 🔴 se almeno una lavora → 🟢 se tutte pronte);
+- una fila di **pallini**, uno per sessione, con il colore del suo stato (i
+  pallini 🟠 lampeggiano);
+- un riepilogo, es. *"3 sessions · 1 waiting · 2 working"*, e il conteggio nella
+  status bar (`·3`).
 
-> Limite: due sessioni Claude nella **stessa** cartella condividono lo stato
-> (stesso `cwd` → stesso file).
+Le **notifiche** scattano per-sessione (quando una singola sessione cambia
+stato). Una sessione che si aggiorna da troppo tempo (crash senza `SessionEnd`)
+viene scartata dopo `sessionTimeoutMinutes`.
+
+L'hook scrive anche `<tmpdir>/claude-code-state.json` (legacy condiviso), usato
+dall'estensione **solo** quando la finestra non ha alcuna cartella aperta.
 
 ### Hook → Stato
 
 | Evento Claude Code  | Condizione               | Stato Semaforo |
 | ------------------- | ------------------------ | -------------- |
 | `SessionStart`      | —                        | 🟢 Verde       |
+| `SessionEnd`        | —                        | (sessione rimossa) |
 | `UserPromptSubmit`  | —                        | 🔴 Rosso       |
 | `PreToolUse`        | tool = `AskUserQuestion` | 🟠 Arancio     |
 | `PreToolUse`        | qualsiasi altro tool     | 🔴 Rosso       |
@@ -131,6 +141,7 @@ nativo: PowerShell (Windows), `osascript` (macOS), `notify-send` (Linux).
 | `claudeSemaforo.notifications.sound`             | `true`               | Riproduce un suono con la notifica.                                                     |
 | `claudeSemaforo.notifications.states`            | `["waiting","idle"]` | Quali stati notificare (`working`, `waiting`, `idle`).                                  |
 | `claudeSemaforo.staleWorkingTimeoutSeconds`      | `120`                | Rete di sicurezza per le interruzioni (vedi sotto). `0` = disattivato.                  |
+| `claudeSemaforo.sessionTimeoutMinutes`           | `60`                 | Scarta una sessione ferma da troppo (crash senza `SessionEnd`). `0` = mai.              |
 
 Le impostazioni si applicano **subito**, senza ricaricare VSCode.
 

@@ -52,81 +52,112 @@ function keyForPath(p: string): string {
   return crypto.createHash('md5').update(norm).digest('hex').slice(0, 16);
 }
 
-// Se la finestra ha una cartella di workspace, legge SOLO i file per-progetto
-// corrispondenti: così ogni finestra mostra lo stato della propria sessione, e
-// un progetto senza file risulta ⚪ offline (NON lo stato di un altro progetto).
-// Il file legacy condiviso è usato solo quando non c'è alcun workspace aperto.
-function getStateFilePaths(): string[] {
-  const folders = vscode.workspace.workspaceFolders ?? [];
-  if (folders.length > 0) {
-    return folders.map(f => path.join(STATE_DIR, keyForPath(f.uri.fsPath) + '.json'));
+// Cartelle di stato per la finestra corrente: una sottocartella per ogni
+// workspace folder (l'hook scrive <STATE_DIR>/<hash(cwd)>/<session>.json).
+// Senza workspace, usa il file legacy globale come sessione singola.
+function sessionDirs(): string[] {
+  return (vscode.workspace.workspaceFolders ?? [])
+    .map(f => path.join(STATE_DIR, keyForPath(f.uri.fsPath)));
+}
+const LEGACY_FILE = path.join(os.tmpdir(), 'claude-code-state.json');
+
+// ── Lettura stato di UNA sessione ──────────────────────────────────────────
+interface Session { key: string; state: SemaforoState; stale: boolean; }
+
+function parseStateFile(filePath: string): { status: SemaforoState; event: string; ageMs: number } | null {
+  try {
+    const json = JSON.parse(fs.readFileSync(filePath, 'utf8').trim());
+    const s = (json.status ?? json.state ?? '').toLowerCase();
+    let status: SemaforoState | null = null;
+    if (s.includes('think') || s.includes('work') || s.includes('run') || s === 'busy') { status = 'working'; }
+    else if (s.includes('wait') || s.includes('confirm') || s.includes('input')) { status = 'waiting'; }
+    else if (s === 'idle' || s === 'ready' || s === 'done') { status = 'idle'; }
+    if (!status) { return null; }
+    const ts = Date.parse(json.timestamp ?? '');
+    const ageMs = isNaN(ts) ? 0 : Math.max(0, Date.now() - ts);
+    return { status, event: String(json.event ?? ''), ageMs };
+  } catch {
+    return null;
   }
-  return [path.join(os.tmpdir(), 'claude-code-state.json')]; // nessun workspace: fallback legacy
 }
 
-// ── Lettura stato dal file ─────────────────────────────────────────────────
-interface RawState { status: SemaforoState; event: string; ageMs: number; }
-
-function readRawState(): RawState {
-  for (const filePath of getStateFilePaths()) {
-    try {
-      if (!fs.existsSync(filePath)) continue;
-      const content = fs.readFileSync(filePath, 'utf8').trim();
-
-      // Prova JSON prima
-      try {
-        const json = JSON.parse(content);
-        const s = (json.status ?? json.state ?? '').toLowerCase();
-        let status: SemaforoState | null = null;
-        if (s.includes('think') || s.includes('work') || s.includes('run') || s === 'busy') { status = 'working'; }
-        else if (s.includes('wait') || s.includes('confirm') || s.includes('input')) { status = 'waiting'; }
-        else if (s === 'idle' || s === 'ready' || s === 'done') { status = 'idle'; }
-        if (status) {
-          const ts = Date.parse(json.timestamp ?? '');
-          const ageMs = isNaN(ts) ? 0 : Math.max(0, Date.now() - ts);
-          return { status, event: String(json.event ?? ''), ageMs };
-        }
-      } catch {
-        // Non è JSON — trattalo come stringa semplice
-        const s = content.toLowerCase();
-        if (s === 'working' || s === 'busy' || s === 'running') { return { status: 'working', event: '', ageMs: 0 }; }
-        if (s === 'waiting' || s === 'confirm') { return { status: 'waiting', event: '', ageMs: 0 }; }
-        if (s === 'idle' || s === 'ready') { return { status: 'idle', event: '', ageMs: 0 }; }
-      }
-    } catch {
-      // file non leggibile, prova il prossimo
-    }
-  }
-  return { status: 'offline', event: '', ageMs: 0 };
-}
-
-// Risolve lo stato da mostrare. Claude Code non emette alcun hook quando
-// interrompi un'azione (Esc): il file resta su "working" e il semaforo
-// resterebbe rosso per sempre. Come rete di sicurezza, se "working" non si
-// aggiorna da troppo tempo E non c'è un tool in esecuzione (PreToolUse), lo
-// consideriamo terminato → idle. Un tool lungo (build) resta quindi rosso.
-// Ritorna anche `stale` per non generare notifiche su questa transizione.
-function resolveState(): { state: SemaforoState; stale: boolean } {
-  const raw = readRawState();
+// Rete di sicurezza per le interruzioni (Esc non emette hook): se "working"
+// non si aggiorna da troppo tempo E non c'è un tool in esecuzione (PreToolUse),
+// lo consideriamo terminato → idle. Un tool lungo (build) resta invece rosso.
+function resolveSessionState(raw: { status: SemaforoState; event: string; ageMs: number }, timeoutSec: number): { state: SemaforoState; stale: boolean } {
   if (raw.status !== 'working') { return { state: raw.status, stale: false }; }
-  const timeoutSec = vscode.workspace.getConfiguration('claudeSemaforo')
-    .get<number>('staleWorkingTimeoutSeconds', 120);
   if (timeoutSec > 0 && raw.event !== 'PreToolUse' && raw.ageMs > timeoutSec * 1000) {
     return { state: 'idle', stale: true };
   }
   return { state: 'working', stale: false };
 }
 
+// Legge TUTTE le sessioni della finestra corrente (una per file).
+function readSessions(): Session[] {
+  const cfg = vscode.workspace.getConfiguration('claudeSemaforo');
+  const timeoutSec = cfg.get<number>('staleWorkingTimeoutSeconds', 120);
+  const deadMin = cfg.get<number>('sessionTimeoutMinutes', 60);
+  const out: Session[] = [];
+  const dirs = sessionDirs();
+
+  if (dirs.length > 0) {
+    for (const dir of dirs) {
+      let files: string[] = [];
+      try { files = fs.readdirSync(dir).filter((f: string) => f.endsWith('.json')); } catch { continue; }
+      for (const f of files) {
+        const raw = parseStateFile(path.join(dir, f));
+        if (!raw) { continue; }
+        // Scarta le sessioni "morte" (crash senza SessionEnd): nessun aggiornamento da troppo.
+        if (deadMin > 0 && raw.ageMs > deadMin * 60 * 1000) { continue; }
+        const r = resolveSessionState(raw, timeoutSec);
+        out.push({ key: `${dir}/${f}`, state: r.state, stale: r.stale });
+      }
+    }
+  } else {
+    // Nessun workspace aperto: usa il file legacy globale come sessione unica.
+    const raw = parseStateFile(LEGACY_FILE);
+    if (raw) {
+      const r = resolveSessionState(raw, timeoutSec);
+      out.push({ key: 'legacy', state: r.state, stale: r.stale });
+    }
+  }
+  return out;
+}
+
+// Stato aggregato per il beacon: mostra il più URGENTE (chi aspetta te vince).
+function aggregateState(sessions: Session[]): SemaforoState {
+  if (sessions.some(s => s.state === 'waiting')) { return 'waiting'; }
+  if (sessions.some(s => s.state === 'working')) { return 'working'; }
+  if (sessions.some(s => s.state === 'idle')) { return 'idle'; }
+  return 'offline';
+}
+
 // ── HTML del semaforo (usato dalla vista laterale) ────────────────────────
-function getSemaforoHtml(state: SemaforoState): string {
-  const S: Record<SemaforoState, { pos: 'red' | 'amber' | 'green' | 'none'; color: string; msg: string; sub: string }> = {
-    working: { pos: 'red', color: '#ff453a', msg: 'Claude is working', sub: 'Processing — please wait' },
-    waiting: { pos: 'amber', color: '#ff9f0a', msg: 'Claude needs you', sub: 'Waiting for your input' },
-    idle: { pos: 'green', color: '#30d158', msg: 'Ready', sub: 'You can type a new prompt' },
-    offline: { pos: 'none', color: '#8e8e93', msg: 'Claude Code is offline', sub: 'No active session here' },
+// `aggregate` = stato più urgente (colore del beacon); `sessions` = stato di
+// ogni sessione Claude aperta (un pallino ciascuno).
+function getSemaforoHtml(aggregate: SemaforoState, sessions: SemaforoState[]): string {
+  const S: Record<SemaforoState, { color: string; msg: string; sub: string }> = {
+    working: { color: '#ff453a', msg: 'Claude is working', sub: 'Processing — please wait' },
+    waiting: { color: '#ff9f0a', msg: 'Claude needs you', sub: 'Waiting for your input' },
+    idle: { color: '#30d158', msg: 'Ready', sub: 'You can type a new prompt' },
+    offline: { color: '#8e8e93', msg: 'Claude Code is offline', sub: 'No active session here' },
   };
-  const s = S[state];
-  const act = (p: string) => (s.pos === p ? ' active' : '');
+  const agg = S[aggregate];
+  const dotClass: Record<SemaforoState, string> = { working: 'red', waiting: 'amber', idle: 'green', offline: 'grey' };
+  const n = sessions.length;
+
+  let label = agg.msg;
+  let sub = agg.sub;
+  if (n === 0) {
+    label = S.offline.msg; sub = S.offline.sub;
+  } else if (n > 1) {
+    const c: Record<string, number> = { waiting: 0, working: 0, idle: 0 };
+    sessions.forEach(st => { if (st in c) { c[st]++; } });
+    const words: Record<string, string> = { waiting: 'waiting', working: 'working', idle: 'ready' };
+    const parts = (['waiting', 'working', 'idle'] as const).filter(k => c[k] > 0).map(k => `${c[k]} ${words[k]}`);
+    sub = `${n} sessions · ${parts.join(' · ')}`;
+  }
+  const dots = sessions.map(st => `<span class="d ${dotClass[st]}"></span>`).join('');
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -137,8 +168,8 @@ function getSemaforoHtml(state: SemaforoState): string {
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
-    --red: #ff453a; --amber: #ff9f0a; --green: #30d158;
-    --glow: ${s.color};
+    --red: #ff453a; --amber: #ff9f0a; --green: #30d158; --grey: #8e8e93;
+    --glow: ${agg.color};
   }
   /* Sfondo trasparente: eredita il tema di VSCode. */
   html, body { background: transparent; }
@@ -223,18 +254,15 @@ function getSemaforoHtml(state: SemaforoState): string {
     .beacon { animation: none !important; }
   }
 
-  /* Traccia: indica quale dei 3 stati è attivo (identità 'semaforo'). */
-  .track { display: flex; gap: 11px; align-items: center; }
-  .track .d {
-    width: 9px; height: 9px; border-radius: 50%;
-    transition: background 0.4s ease, box-shadow 0.4s ease;
-  }
-  .track .d.red   { background: color-mix(in srgb, var(--red)   30%, transparent); }
-  .track .d.amber { background: color-mix(in srgb, var(--amber) 30%, transparent); }
-  .track .d.green { background: color-mix(in srgb, var(--green) 30%, transparent); }
-  .track .d.active.red   { background: var(--red);   box-shadow: 0 0 9px var(--red); }
-  .track .d.active.amber { background: var(--amber); box-shadow: 0 0 9px var(--amber); }
-  .track .d.active.green { background: var(--green); box-shadow: 0 0 9px var(--green); }
+  /* Pallini: uno per sessione Claude aperta, colore = stato della sessione. */
+  .dots { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; max-width: 200px; }
+  .dots:empty { display: none; }
+  .dots .d { width: 10px; height: 10px; border-radius: 50%; }
+  .dots .d.red   { background: var(--red);   box-shadow: 0 0 8px var(--red); }
+  .dots .d.amber { background: var(--amber); box-shadow: 0 0 8px var(--amber); animation: blink 1.1s ease-in-out infinite; }
+  .dots .d.green { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .dots .d.grey  { background: var(--grey); }
+  @media (prefers-reduced-motion: reduce) { .dots .d.amber { animation: none; } }
 
   /* Testo di stato */
   .copy { text-align: center; max-width: 240px; }
@@ -251,17 +279,13 @@ function getSemaforoHtml(state: SemaforoState): string {
   }
 </style>
 </head>
-<body class="state-${state}">
+<body class="state-${aggregate}">
   <div class="title">Claude · Status</div>
   <div class="beacon"></div>
-  <div class="track">
-    <span class="d red${act('red')}"></span>
-    <span class="d amber${act('amber')}"></span>
-    <span class="d green${act('green')}"></span>
-  </div>
+  <div class="dots">${dots}</div>
   <div class="copy">
-    <div class="label">${s.msg}</div>
-    <div class="sub">${s.sub}</div>
+    <div class="label">${label}</div>
+    <div class="sub">${sub}</div>
   </div>
 </body>
 </html>`;
@@ -271,18 +295,20 @@ function getSemaforoHtml(state: SemaforoState): string {
 class SemaforoViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = 'claudeSemaforo.view';
   private view?: vscode.WebviewView;
-  private currentState: SemaforoState = 'offline';
+  private aggregate: SemaforoState = 'offline';
+  private sessions: SemaforoState[] = [];
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
     this.view = webviewView;
     webviewView.webview.options = { enableScripts: false };
-    webviewView.webview.html = getSemaforoHtml(this.currentState);
+    webviewView.webview.html = getSemaforoHtml(this.aggregate, this.sessions);
   }
 
-  update(state: SemaforoState): void {
-    this.currentState = state;
+  update(aggregate: SemaforoState, sessions: SemaforoState[]): void {
+    this.aggregate = aggregate;
+    this.sessions = sessions;
     if (this.view) {
-      this.view.webview.html = getSemaforoHtml(state);
+      this.view.webview.html = getSemaforoHtml(aggregate, sessions);
     }
   }
 }
@@ -359,12 +385,13 @@ export function activate(context: vscode.ExtensionContext) {
     )
   );
 
-  function updateUI(state: SemaforoState) {
-    const info = STATES[state];
-    statusBar.text = `${info.icon} ${info.label}`;
+  function updateUI(sessions: Session[], agg: SemaforoState) {
+    const info = STATES[agg];
+    const n = sessions.length;
+    statusBar.text = n > 1 ? `${info.icon} ${info.label} ·${n}` : `${info.icon} ${info.label}`;
     statusBar.backgroundColor = info.color;
-    statusBar.tooltip = info.tooltip;
-    viewProvider.update(state);
+    statusBar.tooltip = n > 1 ? `${info.tooltip}  (${n} sessioni attive)` : info.tooltip;
+    viewProvider.update(agg, sessions.map(s => s.state));
   }
 
   // Comando per mettere a fuoco la vista laterale del semaforo
@@ -379,12 +406,8 @@ export function activate(context: vscode.ExtensionContext) {
   const folderName = vscode.workspace.workspaceFolders?.[0]?.name;
   const notifyTitle = folderName ? `Claude Status — ${folderName}` : 'Claude Status';
 
-  // Stato iniziale come baseline (nessuna notifica all'avvio).
-  let lastState: SemaforoState = resolveState().state;
-  updateUI(lastState);
-
-  // Decide se inviare la notifica di sistema per il nuovo stato, leggendo le
-  // impostazioni utente a runtime (i cambi valgono subito, senza reload).
+  // Decide se inviare la notifica di sistema per un cambio di stato, leggendo
+  // le impostazioni utente a runtime (i cambi valgono subito, senza reload).
   function maybeNotify(next: SemaforoState) {
     const cfg = vscode.workspace.getConfiguration('claudeSemaforo');
     const when = cfg.get<string>('notifications.when', 'always');
@@ -396,20 +419,42 @@ export function activate(context: vscode.ExtensionContext) {
     notifyOS(notifyTitle, NOTIFY_TEXT[next], sound);
   }
 
-  // Applica un nuovo stato: aggiorna la UI e valuta la notifica.
-  // `allowNotify` è false per le transizioni derivate dal timeout di
-  // "working stantio" (interruzione), che non devono suonare/notificare.
-  function applyState(next: SemaforoState, allowNotify: boolean) {
-    if (next === lastState) { return; }
-    lastState = next;
-    updateUI(next);
-    if (allowNotify) { maybeNotify(next); }
-  }
+  // Firma dello stato mostrato: aggiorniamo il webview SOLO quando cambia,
+  // altrimenti il re-render azzererebbe l'animazione ogni secondo.
+  let lastSig = '';
+  // Stato precedente di ogni sessione, per notificare sui cambi per-sessione.
+  const lastSessionStates = new Map<string, SemaforoState>();
+  let baseline = true; // primo giro: popola senza notificare
 
   function refresh() {
-    const { state, stale } = resolveState();
-    applyState(state, !stale);
+    const sessions = readSessions();
+    const agg = aggregateState(sessions);
+
+    const sig = agg + '|' + sessions.map(s => `${s.key}=${s.state}`).sort().join(',');
+    if (sig !== lastSig) {
+      lastSig = sig;
+      updateUI(sessions, agg);
+    }
+
+    // Notifiche per-sessione (indipendenti dal rendering).
+    const seen = new Set<string>();
+    for (const s of sessions) {
+      seen.add(s.key);
+      const prev = lastSessionStates.get(s.key);
+      lastSessionStates.set(s.key, s.state);
+      // Notifica solo su un vero cambio (non alla scoperta della sessione, non
+      // sulle transizioni derivate dal timeout anti-blocco).
+      if (!baseline && prev !== undefined && prev !== s.state && !s.stale) {
+        maybeNotify(s.state);
+      }
+    }
+    for (const k of [...lastSessionStates.keys()]) {
+      if (!seen.has(k)) { lastSessionStates.delete(k); }
+    }
+    baseline = false;
   }
+
+  refresh(); // render iniziale (baseline, nessuna notifica)
 
   // Polling ogni secondo
   const timer = setInterval(refresh, 1000);
@@ -418,16 +463,15 @@ export function activate(context: vscode.ExtensionContext) {
   // subito (senza attendere che l'hook la crei alla prima scrittura).
   try { fs.mkdirSync(STATE_DIR, { recursive: true }); } catch { /* ignora */ }
 
-  // Watch file system per risposta immediata
+  // Watch file system per risposta immediata: ricorsivo su STATE_DIR così
+  // cattura le sottocartelle per-progetto e i file per-sessione.
   const watchers: fs.FSWatcher[] = [];
-  for (const fp of getStateFilePaths()) {
+  try { watchers.push(fs.watch(STATE_DIR, { recursive: true }, () => refresh())); } catch { /* fallback: polling */ }
+  // Senza workspace usiamo il file legacy nella tmpdir.
+  if ((vscode.workspace.workspaceFolders ?? []).length === 0) {
     try {
-      const dir = path.dirname(fp);
-      if (fs.existsSync(dir)) {
-        const w = fs.watch(dir, refresh);
-        watchers.push(w);
-      }
-    } catch { /* directory non accessibile */ }
+      watchers.push(fs.watch(os.tmpdir(), (_e: string, f: string | null) => { if (f === 'claude-code-state.json') { refresh(); } }));
+    } catch { /* fallback: polling */ }
   }
 
   context.subscriptions.push({
