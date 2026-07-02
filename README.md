@@ -103,8 +103,15 @@ mostra:
   status bar (`·3`).
 
 Le **notifiche** scattano per-sessione (quando una singola sessione cambia
-stato). Una sessione che si aggiorna da troppo tempo (crash senza `SessionEnd`)
-viene scartata dopo `sessionTimeoutMinutes`.
+stato).
+
+**Chiusura di una sessione:** su un'uscita pulita (`/quit`, `/clear`, chiusura
+del pannello) scatta `SessionEnd` e il pallino sparisce subito. Ma `SessionEnd`
+**non è garantito** su chiusure forzate, e gli hook si caricano all'**avvio**
+della sessione (le sessioni aperte *prima* di configurarlo non lo eseguiranno).
+Come rete di sicurezza, una sessione senza aggiornamenti da più di
+`sessionTimeoutMinutes` (default 10) viene considerata chiusa e il suo file
+rimosso. Quindi una sessione chiusa "a freddo" sparisce comunque entro ~10 min.
 
 L'hook scrive anche `<tmpdir>/claude-code-state.json` (legacy condiviso), usato
 dall'estensione **solo** quando la finestra non ha alcuna cartella aperta.
@@ -155,7 +162,7 @@ nativo: PowerShell (Windows), `osascript` (macOS), `notify-send` (Linux).
 | `claudeSemaforo.notifications.sound`             | `true`               | Riproduce un suono con la notifica.                                                     |
 | `claudeSemaforo.notifications.states`            | `["waiting","idle"]` | Quali stati notificare (`working`, `waiting`, `idle`).                                  |
 | `claudeSemaforo.staleWorkingTimeoutSeconds`      | `120`                | Rete di sicurezza per le interruzioni (vedi sotto). `0` = disattivato.                  |
-| `claudeSemaforo.sessionTimeoutMinutes`           | `60`                 | Scarta una sessione ferma da troppo (crash senza `SessionEnd`). `0` = mai.              |
+| `claudeSemaforo.sessionTimeoutMinutes`           | `10`                 | Dopo quanti minuti senza aggiornamenti una sessione è considerata chiusa e rimossa (`SessionEnd` non è garantito su chiusure forzate). Più basso = sparisce prima; `0` = mai. |
 
 Le impostazioni si applicano **subito**, senza ricaricare VSCode.
 

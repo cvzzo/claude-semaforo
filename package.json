@@ -2,7 +2,7 @@
   "name": "claude-semaforo",
   "displayName": "Claude Status",
   "description": "Semaforo visivo per lo stato di Claude Code",
-  "version": "1.10.1",
+  "version": "1.10.2",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -98,9 +98,9 @@
         },
         "claudeSemaforo.sessionTimeoutMinutes": {
           "type": "number",
-          "default": 60,
+          "default": 10,
           "minimum": 0,
-          "markdownDescription": "Multi-session cleanup: a session whose state hasn't updated for this many minutes is treated as dead (e.g. Claude crashed without a `SessionEnd`) and dropped from the traffic light. Set to `0` to never drop."
+          "markdownDescription": "Multi-session cleanup: a session whose state hasn't updated for this many minutes is treated as closed (Claude Code doesn't always emit `SessionEnd` on abrupt close) and its dot is removed. A clean exit removes it immediately. Lower = closed sessions disappear sooner; higher = idle-but-open sessions linger longer. Set to `0` to never auto-drop."
         }
       }
     }

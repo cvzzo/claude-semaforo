@@ -96,7 +96,7 @@ function resolveSessionState(raw: { status: SemaforoState; event: string; ageMs:
 function readSessions(): Session[] {
   const cfg = vscode.workspace.getConfiguration('claudeSemaforo');
   const timeoutSec = cfg.get<number>('staleWorkingTimeoutSeconds', 120);
-  const deadMin = cfg.get<number>('sessionTimeoutMinutes', 60);
+  const deadMin = cfg.get<number>('sessionTimeoutMinutes', 10);
   const out: Session[] = [];
   const dirs = sessionDirs();
 
@@ -105,10 +105,15 @@ function readSessions(): Session[] {
       let files: string[] = [];
       try { files = fs.readdirSync(dir).filter((f: string) => f.endsWith('.json')); } catch { continue; }
       for (const f of files) {
-        const raw = parseStateFile(path.join(dir, f));
+        const fp = path.join(dir, f);
+        const raw = parseStateFile(fp);
         if (!raw) { continue; }
-        // Scarta le sessioni "morte" (crash senza SessionEnd): nessun aggiornamento da troppo.
-        if (deadMin > 0 && raw.ageMs > deadMin * 60 * 1000) { continue; }
+        // Sessione "morta" (chiusa senza SessionEnd, o crash): nessun aggiornamento
+        // da troppo tempo → cancella il file così sparisce e non riappare.
+        if (deadMin > 0 && raw.ageMs > deadMin * 60 * 1000) {
+          try { fs.unlinkSync(fp); } catch { /* ignora */ }
+          continue;
+        }
         const r = resolveSessionState(raw, timeoutSec);
         out.push({ key: `${dir}/${f}`, state: r.state, stale: r.stale });
       }
@@ -587,6 +592,16 @@ export function activate(context: vscode.ExtensionContext) {
   // Assicura l'esistenza della cartella di stato così il watcher si aggancia
   // subito (senza attendere che l'hook la crei alla prima scrittura).
   try { fs.mkdirSync(STATE_DIR, { recursive: true }); } catch { /* ignora */ }
+
+  // Migrazione: rimuovi i vecchi file per-progetto (modello pre-1.9, file .json
+  // direttamente in STATE_DIR). Ora lo stato vive in sottocartelle per-sessione.
+  try {
+    for (const e of fs.readdirSync(STATE_DIR, { withFileTypes: true })) {
+      if (e.isFile() && e.name.endsWith('.json')) {
+        try { fs.unlinkSync(path.join(STATE_DIR, e.name)); } catch { /* ignora */ }
+      }
+    }
+  } catch { /* ignora */ }
 
   // Watch file system per risposta immediata: ricorsivo su STATE_DIR così
   // cattura le sottocartelle per-progetto e i file per-sessione.
