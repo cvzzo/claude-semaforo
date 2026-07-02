@@ -161,19 +161,20 @@ inviare i cambi di stato a un bot Telegram. A differenza del toast, Telegram
 **ignora il focus** della finestra (parte comunque), ma usa lo stesso filtro
 `notifications.states`.
 
-Setup:
+Setup (guidato, **senza toccare il JSON**):
 
 1. Su Telegram apri [@BotFather](https://t.me/BotFather) → `/newbot` → ottieni il
-   **bot token**.
-2. Scrivi un messaggio qualsiasi al tuo nuovo bot (per "aprirlo").
-3. Ricava il tuo **chat id**: scrivi a [@userinfobot](https://t.me/userinfobot),
-   oppure imposta il token e lancia il comando **"Claude Status: Send a test
-   Telegram message"**.
-4. In Settings imposta `telegram.enabled = true`, `telegram.botToken`,
-   `telegram.chatId`.
-5. Verifica con il comando **"Claude Status: Send a test Telegram message"**.
+   **bot token**. Scrivi poi un messaggio qualsiasi al tuo nuovo bot.
+2. In VSCode: palette (`Ctrl/Cmd+Shift+P`) → **"Claude Status: Configure Telegram
+   notifications"**. Incolla il token; il chat id lo **rileva da solo** (dai
+   messaggi che hai mandato al bot) oppure lo inserisci a mano. Scrive le
+   impostazioni utente e invia un messaggio di test.
 
-> Il token è salvato in chiaro in `settings.json`.
+Comandi correlati: **"Claude Status: Send a test Telegram message"** per un test
+al volo. In alternativa puoi impostare a mano `telegram.enabled/botToken/chatId`.
+
+> Il token è salvato in chiaro nelle impostazioni utente. Se lo esponi,
+> revocalo con `/revoke` in @BotFather. Il chat id è un **numero**, non il token.
 
 **Impostazioni** (`File → Preferences → Settings`, cerca "Claude Status"):
 

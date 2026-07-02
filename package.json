@@ -2,7 +2,7 @@
   "name": "claude-semaforo",
   "displayName": "Claude Status",
   "description": "Semaforo visivo per lo stato di Claude Code",
-  "version": "1.11.0",
+  "version": "1.11.1",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -43,6 +43,10 @@
       {
         "command": "claudeSemaforo.setupHooks",
         "title": "Claude Status: Set up Claude Code hooks (this machine)"
+      },
+      {
+        "command": "claudeSemaforo.setupTelegram",
+        "title": "Claude Status: Configure Telegram notifications"
       },
       {
         "command": "claudeSemaforo.testTelegram",

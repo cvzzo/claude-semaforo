@@ -408,6 +408,32 @@ function sendTelegram(token: string, chatId: string, text: string, onDone?: (err
   req.end();
 }
 
+// Rileva le chat che hanno scritto al bot (per ricavare il chat id senze JSON).
+function telegramGetChatIds(token: string): Promise<{ id: number; label: string }[]> {
+  return new Promise((resolve, reject) => {
+    if (!token) { reject(new Error('Bot token mancante.')); return; }
+    https.get(`https://api.telegram.org/bot${token}/getUpdates`, res => {
+      let d = '';
+      res.on('data', (c: Buffer) => { d += c; });
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(d);
+          if (!j.ok) { reject(new Error(j.description || `HTTP ${res.statusCode}`)); return; }
+          const seen = new Map<number, string>();
+          for (const u of j.result) {
+            const m = u.message || u.edited_message || u.channel_post;
+            const c = m && m.chat;
+            if (c && !seen.has(c.id)) {
+              seen.set(c.id, `${c.type}${c.username ? ' @' + c.username : ''}${c.first_name ? ' ' + c.first_name : ''}${c.title ? ' ' + c.title : ''}`);
+            }
+          }
+          resolve([...seen].map(([id, label]) => ({ id, label })));
+        } catch (e: any) { reject(new Error(e?.message || 'parse error')); }
+      });
+    }).on('error', (e: Error) => reject(e));
+  });
+}
+
 // ── Auto-provisioning degli hook di Claude Code ───────────────────────────
 // Utile soprattutto su nuove macchine e ambienti remoti: installando il .vsix
 // (lato workspace), l'estensione mette da sola l'hook in ~/.claude/hooks/ e può
@@ -546,6 +572,70 @@ export function activate(context: vscode.ExtensionContext) {
       } else {
         vscode.window.showWarningMessage(`🚦 Hook installato, ma non ho toccato settings.json: ${res.reason} Vedi claude-settings-example.json.`);
       }
+    })
+  );
+
+  // Comando GUIDATO per configurare Telegram senza toccare il JSON.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claudeSemaforo.setupTelegram', async () => {
+      const cfg = () => vscode.workspace.getConfiguration('claudeSemaforo');
+      const token = await vscode.window.showInputBox({
+        title: 'Telegram — Bot token',
+        prompt: 'Token da @BotFather',
+        value: cfg().get<string>('telegram.botToken', ''),
+        ignoreFocusOut: true,
+        password: true,
+      });
+      if (!token) { return; }
+
+      const how = await vscode.window.showQuickPick(
+        [
+          { label: 'Rileva automaticamente', description: 'Scrivi prima un messaggio al bot su Telegram' },
+          { label: 'Inserisci manualmente', description: 'Il numero da @userinfobot' },
+        ],
+        { title: 'Come ottenere il chat id?', ignoreFocusOut: true }
+      );
+      if (!how) { return; }
+
+      let chatId = '';
+      if (how.label.startsWith('Rileva')) {
+        try {
+          const chats = await telegramGetChatIds(token);
+          if (!chats.length) {
+            vscode.window.showWarningMessage('🚦 Telegram: nessun messaggio trovato. Scrivi qualcosa al bot e riprova.');
+            return;
+          }
+          if (chats.length === 1) {
+            chatId = String(chats[0].id);
+          } else {
+            const pick = await vscode.window.showQuickPick(
+              chats.map(c => ({ label: String(c.id), description: c.label })),
+              { title: 'Scegli la chat', ignoreFocusOut: true }
+            );
+            if (!pick) { return; }
+            chatId = pick.label;
+          }
+        } catch (e: any) {
+          vscode.window.showErrorMessage(`🚦 Telegram: ${e?.message ?? e}`);
+          return;
+        }
+      } else {
+        chatId = (await vscode.window.showInputBox({
+          title: 'Telegram — Chat id',
+          prompt: 'Numero (da @userinfobot)',
+          value: cfg().get<string>('telegram.chatId', ''),
+          ignoreFocusOut: true,
+        })) ?? '';
+        if (!chatId) { return; }
+      }
+
+      await cfg().update('telegram.botToken', token, vscode.ConfigurationTarget.Global);
+      await cfg().update('telegram.chatId', chatId, vscode.ConfigurationTarget.Global);
+      await cfg().update('telegram.enabled', true, vscode.ConfigurationTarget.Global);
+      sendTelegram(token, chatId, '🚦 Claude Status: Telegram configurato ✓', err => {
+        if (err) { vscode.window.showErrorMessage(`🚦 Telegram configurato, ma il test è fallito: ${err}`); }
+        else { vscode.window.showInformationMessage('🚦 Telegram configurato e testato ✓'); }
+      });
     })
   );
 
