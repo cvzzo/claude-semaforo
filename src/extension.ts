@@ -732,34 +732,55 @@ export function activate(context: vscode.ExtensionContext) {
 
   const EMOJI: Record<SemaforoState, string> = { working: '🔴', waiting: '🟠', idle: '🟢', offline: '⚪' };
 
-  // Decide le notifiche per un cambio di stato, leggendo le impostazioni a
-  // runtime. Il toast desktop rispetta `when`/focus; Telegram è indipendente
-  // dal focus (ti serve proprio quando sei lontano dal PC).
-  function maybeNotify(next: SemaforoState) {
+  // Stato precedente di ogni sessione + timer Telegram in sospeso per sessione.
+  const lastSessionStates = new Map<string, SemaforoState>();
+  const tgTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+  // Toast desktop: immediato, governato da notifications.when + focus.
+  function notifyDesktop(next: SemaforoState) {
     const cfg = vscode.workspace.getConfiguration('claudeSemaforo');
-    const states = cfg.get<string[]>('notifications.states', ['waiting', 'idle']);
-    if (!states.includes(next)) { return; }
-
-    // Toast desktop (governato da notifications.when + focus)
+    if (!cfg.get<string[]>('notifications.states', ['waiting', 'idle']).includes(next)) { return; }
     const when = cfg.get<string>('notifications.when', 'always');
-    const desktopOk = when !== 'never' && !(when === 'whenUnfocused' && vscode.window.state.focused);
-    if (desktopOk) {
-      notifyOS(notifyTitle, NOTIFY_TEXT[next], cfg.get<boolean>('notifications.sound', true));
-    }
+    if (when === 'never') { return; }
+    if (when === 'whenUnfocused' && vscode.window.state.focused) { return; }
+    notifyOS(notifyTitle, NOTIFY_TEXT[next], cfg.get<boolean>('notifications.sound', true));
+  }
 
-    // Telegram (config: impostazioni VSCode con priorità, fallback su ~/.claude)
+  // Telegram: RITARDATO. Parte solo se dopo N secondi lo stato della sessione è
+  // ancora lo stesso (nessuna risposta / nuovo prompt nel frattempo). Ogni
+  // cambio di stato azzera il timer pendente per quella sessione.
+  function scheduleTelegram(key: string, next: SemaforoState) {
+    const existing = tgTimers.get(key);
+    if (existing) { clearTimeout(existing); tgTimers.delete(key); }
+
+    const cfg = vscode.workspace.getConfiguration('claudeSemaforo');
+    if (!cfg.get<string[]>('notifications.states', ['waiting', 'idle']).includes(next)) { return; }
     const tg = getTelegramConfig();
-    if (tg.enabled) {
-      const suffix = folderName ? ` — ${folderName}` : '';
-      sendTelegram(tg.botToken, tg.chatId, `${EMOJI[next]} ${NOTIFY_TEXT[next]}${suffix}`);
-    }
+    if (!tg.enabled) { return; }
+
+    const delaySec = next === 'waiting' ? cfg.get<number>('telegram.waitingDelaySeconds', 10)
+      : next === 'idle' ? cfg.get<number>('telegram.idleDelaySeconds', 30)
+        : 0;
+    const suffix = folderName ? ` — ${folderName}` : '';
+    const send = () => sendTelegram(tg.botToken, tg.chatId, `${EMOJI[next]} ${NOTIFY_TEXT[next]}${suffix}`);
+
+    if (delaySec <= 0) { send(); return; }
+    const t = setTimeout(() => {
+      tgTimers.delete(key);
+      // Invia solo se la sessione è ANCORA in questo stato (niente risposta/prompt).
+      if (lastSessionStates.get(key) === next) { send(); }
+    }, delaySec * 1000);
+    tgTimers.set(key, t);
+  }
+
+  function onSessionChanged(key: string, next: SemaforoState) {
+    notifyDesktop(next);
+    scheduleTelegram(key, next);
   }
 
   // Firma dello stato mostrato: aggiorniamo il webview SOLO quando cambia,
   // altrimenti il re-render azzererebbe l'animazione ogni secondo.
   let lastSig = '';
-  // Stato precedente di ogni sessione, per notificare sui cambi per-sessione.
-  const lastSessionStates = new Map<string, SemaforoState>();
   let baseline = true; // primo giro: popola senza notificare
 
   function refresh() {
@@ -778,14 +799,19 @@ export function activate(context: vscode.ExtensionContext) {
       seen.add(s.key);
       const prev = lastSessionStates.get(s.key);
       lastSessionStates.set(s.key, s.state);
-      // Notifica solo su un vero cambio (non alla scoperta della sessione, non
-      // sulle transizioni derivate dal timeout anti-blocco).
+      // Solo su un vero cambio (non alla scoperta della sessione, non sulle
+      // transizioni derivate dal timeout anti-blocco).
       if (!baseline && prev !== undefined && prev !== s.state && !s.stale) {
-        maybeNotify(s.state);
+        onSessionChanged(s.key, s.state);
       }
     }
+    // Sessione sparita: dimenticala e annulla il suo timer Telegram in sospeso.
     for (const k of [...lastSessionStates.keys()]) {
-      if (!seen.has(k)) { lastSessionStates.delete(k); }
+      if (!seen.has(k)) {
+        lastSessionStates.delete(k);
+        const t = tgTimers.get(k);
+        if (t) { clearTimeout(t); tgTimers.delete(k); }
+      }
     }
     baseline = false;
   }
@@ -824,6 +850,8 @@ export function activate(context: vscode.ExtensionContext) {
     dispose: () => {
       clearInterval(timer);
       watchers.forEach(w => w.close());
+      tgTimers.forEach(t => clearTimeout(t));
+      tgTimers.clear();
     }
   });
 

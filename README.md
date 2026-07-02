@@ -181,6 +181,12 @@ VSCode, poi come fallback il file `~/.claude/claude-status.json`:
 Il file è comodo sui **remoti/container**: lo configuri una volta (anche su un
 volume condiviso) e vale su tutte le sessioni, senza rifare il setup ovunque.
 
+**Ritardo anti-rumore (solo Telegram):** il messaggio Telegram parte solo se lo
+stato **resta invariato** dopo un ritardo — così non ti arriva nulla se rispondi
+subito o lanci un nuovo prompt. Default: 🟠 waiting dopo **10s**, 🟢 idle dopo
+**30s** (`telegram.waitingDelaySeconds` / `telegram.idleDelaySeconds`, `0` =
+subito). Il toast desktop invece resta immediato.
+
 Comandi correlati: **"Claude Status: Send a test Telegram message"** per un test
 al volo. In alternativa puoi impostare a mano `telegram.enabled/botToken/chatId`.
 
@@ -197,6 +203,8 @@ al volo. In alternativa puoi impostare a mano `telegram.enabled/botToken/chatId`
 | `claudeSemaforo.telegram.enabled`                | `false`              | Invia anche i cambi di stato a Telegram (ignora il focus).                              |
 | `claudeSemaforo.telegram.botToken`               | `""`                 | Token del bot (da @BotFather).                                                          |
 | `claudeSemaforo.telegram.chatId`                 | `""`                 | Il tuo chat id Telegram.                                                                |
+| `claudeSemaforo.telegram.waitingDelaySeconds`    | `10`                 | Telegram 🟠 solo se ancora "waiting" dopo N secondi (no risposta/nuovo prompt).         |
+| `claudeSemaforo.telegram.idleDelaySeconds`       | `30`                 | Telegram 🟢 solo se ancora "idle" dopo N secondi (nessun nuovo prompt).                 |
 | `claudeSemaforo.staleWorkingTimeoutSeconds`      | `120`                | Rete di sicurezza per le interruzioni (vedi sotto). `0` = disattivato.                  |
 | `claudeSemaforo.sessionTimeoutMinutes`           | `10`                 | Dopo quanti minuti senza aggiornamenti una sessione è considerata chiusa e rimossa (`SessionEnd` non è garantito su chiusure forzate). Più basso = sparisce prima; `0` = mai. |
 

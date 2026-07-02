@@ -2,7 +2,7 @@
   "name": "claude-semaforo",
   "displayName": "Claude Status",
   "description": "Semaforo visivo per lo stato di Claude Code",
-  "version": "1.12.0",
+  "version": "1.13.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -112,6 +112,18 @@
           "type": "string",
           "default": "",
           "markdownDescription": "Your Telegram chat id (message the bot once, then run the command **Claude Status: Send a test Telegram message**, or use [@userinfobot](https://t.me/userinfobot))."
+        },
+        "claudeSemaforo.telegram.waitingDelaySeconds": {
+          "type": "number",
+          "default": 10,
+          "minimum": 0,
+          "markdownDescription": "Delay before the Telegram message for 🟠 **waiting**: sent only if the session is *still* waiting after this many seconds (i.e. you haven't responded / no new prompt). `0` = send immediately."
+        },
+        "claudeSemaforo.telegram.idleDelaySeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "markdownDescription": "Delay before the Telegram message for 🟢 **idle/ready**: sent only if the session is *still* idle after this many seconds (i.e. you haven't started a new prompt). `0` = send immediately."
         },
         "claudeSemaforo.staleWorkingTimeoutSeconds": {
           "type": "number",
