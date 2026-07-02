@@ -166,6 +166,13 @@ La notifica scatta solo per gli stati in cui Claude aspetta te o ha finito:
 Il titolo include il nome della cartella, utile con più progetti aperti. Toast
 nativo: PowerShell (Windows), `osascript` (macOS), `notify-send` (Linux).
 
+**Tempo nello stato:** la status bar mostra da quanto dura lo stato corrente
+(es. *🟠 Claude needs you · 45s*, *🔴 Claude working · 2m*), aggiornato in tempo reale.
+
+**Snooze:** comando **"Claude Status: Snooze notifications"** per silenziare
+desktop **e** Telegram per 15m / 30m / 1h / 2h (o riattivare). Mentre è attivo,
+in status bar compare 🔕.
+
 ### Notifiche Telegram (opzionale)
 
 Per essere avvisato **anche quando sei lontano dal PC** (sul telefono), puoi far

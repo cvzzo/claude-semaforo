@@ -63,7 +63,7 @@ function sessionDirs(): string[] {
 const LEGACY_FILE = path.join(os.tmpdir(), 'claude-code-state.json');
 
 // ── Lettura stato di UNA sessione ──────────────────────────────────────────
-interface Session { key: string; state: SemaforoState; stale: boolean; name: string; }
+interface Session { key: string; state: SemaforoState; stale: boolean; name: string; ageMs: number; }
 
 function parseStateFile(filePath: string): { status: SemaforoState; event: string; ageMs: number; name: string } | null {
   try {
@@ -128,7 +128,7 @@ function readSessions(): Session[] {
         }
         const r = resolveSessionState(raw, timeoutSec);
         const key = `${dir}/${f}`;
-        out.push({ key, state: r.state, stale: r.stale, name: nameFor(key, raw.name) });
+        out.push({ key, state: r.state, stale: r.stale, name: nameFor(key, raw.name), ageMs: raw.ageMs });
       }
     }
   } else {
@@ -136,7 +136,7 @@ function readSessions(): Session[] {
     const raw = parseStateFile(LEGACY_FILE);
     if (raw) {
       const r = resolveSessionState(raw, timeoutSec);
-      out.push({ key: 'legacy', state: r.state, stale: r.stale, name: raw.name || '' });
+      out.push({ key: 'legacy', state: r.state, stale: r.stale, name: raw.name || '', ageMs: raw.ageMs });
     }
   }
   // Ordine stabile (per chiave) → numerazione dei pallini coerente tra i refresh.
@@ -397,6 +397,17 @@ const NOTIFY_TEXT: Record<SemaforoState, string> = {
   offline: 'Claude Code is not active',
 };
 
+// Durata compatta: 45s, 2m, 1h5m
+function fmtDur(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  if (s < 60) { return `${s}s`; }
+  const m = Math.floor(s / 60);
+  if (m < 60) { return `${m}m`; }
+  const h = Math.floor(m / 60);
+  const rem = m % 60;
+  return rem ? `${h}h${rem}m` : `${h}h`;
+}
+
 // ── Config Telegram: impostazioni VSCode con priorità, fallback su file ────
 // Il file ~/.claude/claude-status.json permette di configurare Telegram una
 // volta e riusarlo su tutte le macchine/remoti (anche su volume condiviso).
@@ -592,6 +603,10 @@ export function activate(context: vscode.ExtensionContext) {
   statusBar.show();
   context.subscriptions.push(statusBar);
 
+  // Snooze notifiche: timestamp (ms) fino a cui le notifiche sono silenziate.
+  let snoozeUntil = context.globalState.get<number>('snoozeUntil', 0);
+  const isSnoozed = () => Date.now() < snoozeUntil;
+
   // Vista webview nella barra laterale (activity bar)
   const viewProvider = new SemaforoViewProvider();
   context.subscriptions.push(
@@ -602,12 +617,27 @@ export function activate(context: vscode.ExtensionContext) {
     )
   );
 
-  function updateUI(sessions: Session[], agg: SemaforoState) {
+  // Status bar: aggiornata ad ogni tick (mostra il tempo nello stato, live).
+  function renderStatusBar(sessions: Session[], agg: SemaforoState) {
     const info = STATES[agg];
     const n = sessions.length;
-    statusBar.text = n > 1 ? `${info.icon} ${info.label} ·${n}` : `${info.icon} ${info.label}`;
+    // Tempo nello stato: il più lungo tra le sessioni nello stato aggregato.
+    let elapsedMs = 0;
+    for (const s of sessions) { if (s.state === agg) { elapsedMs = Math.max(elapsedMs, s.ageMs); } }
+    const el = (agg !== 'offline' && elapsedMs > 0) ? ` · ${fmtDur(elapsedMs)}` : '';
+    const count = n > 1 ? ` ·${n}` : '';
+    const bell = isSnoozed() ? '$(bell-slash) ' : '';
+    statusBar.text = `${bell}${info.icon} ${info.label}${count}${el}`;
     statusBar.backgroundColor = info.color;
-    statusBar.tooltip = n > 1 ? `${info.tooltip}  (${n} sessioni attive)` : info.tooltip;
+    const parts = [info.tooltip];
+    if (n > 1) { parts.push(`${n} sessioni attive`); }
+    if (el) { parts.push(`in questo stato da ${fmtDur(elapsedMs)}`); }
+    if (isSnoozed()) { parts.push(`🔕 notifiche silenziate fino alle ${new Date(snoozeUntil).toLocaleTimeString()}`); }
+    statusBar.tooltip = parts.join(' · ');
+  }
+
+  // Webview: aggiornata SOLO al cambio (per non azzerare l'animazione).
+  function updateView(sessions: Session[], agg: SemaforoState) {
     viewProvider.update(agg, sessions.map(s => ({ state: s.state, name: s.name })));
   }
 
@@ -615,6 +645,32 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('claudeSemaforo.showPanel', () => {
       vscode.commands.executeCommand('claudeSemaforo.view.focus');
+    })
+  );
+
+  // Comando: silenzia le notifiche (desktop + Telegram) per un po'.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claudeSemaforo.snooze', async () => {
+      const opts: { label: string; description?: string; min: number }[] = [
+        { label: '15 minuti', min: 15 },
+        { label: '30 minuti', min: 30 },
+        { label: '1 ora', min: 60 },
+        { label: '2 ore', min: 120 },
+        { label: 'Riattiva ora', description: 'Togli il silenzioso', min: 0 },
+      ];
+      const pick = await vscode.window.showQuickPick(
+        opts.map(o => ({ label: o.label, description: o.description, min: o.min })),
+        { title: isSnoozed() ? `Notifiche silenziate fino alle ${new Date(snoozeUntil).toLocaleTimeString()}` : 'Silenzia le notifiche per…', ignoreFocusOut: true }
+      );
+      if (!pick) { return; }
+      snoozeUntil = pick.min > 0 ? Date.now() + pick.min * 60_000 : 0;
+      await context.globalState.update('snoozeUntil', snoozeUntil);
+      refresh();
+      vscode.window.showInformationMessage(
+        pick.min > 0
+          ? `🔕 Notifiche silenziate fino alle ${new Date(snoozeUntil).toLocaleTimeString()}.`
+          : '🔔 Notifiche riattivate.'
+      );
     })
   );
 
@@ -805,6 +861,7 @@ export function activate(context: vscode.ExtensionContext) {
 
   // Toast desktop: immediato, governato da notifications.when + focus.
   function notifyDesktop(next: SemaforoState, name: string) {
+    if (isSnoozed()) { return; }
     const cfg = vscode.workspace.getConfiguration('claudeSemaforo');
     if (!cfg.get<string[]>('notifications.states', ['waiting', 'idle']).includes(next)) { return; }
     const when = cfg.get<string>('notifications.when', 'always');
@@ -820,6 +877,7 @@ export function activate(context: vscode.ExtensionContext) {
   function scheduleTelegram(key: string, next: SemaforoState, name: string) {
     const existing = tgTimers.get(key);
     if (existing) { clearTimeout(existing); tgTimers.delete(key); }
+    if (isSnoozed()) { return; }
 
     const cfg = vscode.workspace.getConfiguration('claudeSemaforo');
     if (!cfg.get<string[]>('notifications.states', ['waiting', 'idle']).includes(next)) { return; }
@@ -836,8 +894,9 @@ export function activate(context: vscode.ExtensionContext) {
     if (delaySec <= 0) { send(); return; }
     const t = setTimeout(() => {
       tgTimers.delete(key);
-      // Invia solo se la sessione è ANCORA in questo stato (niente risposta/prompt).
-      if (lastSessionStates.get(key) === next) { send(); }
+      // Invia solo se la sessione è ANCORA in questo stato (niente risposta/prompt)
+      // e le notifiche non sono state silenziate nel frattempo.
+      if (lastSessionStates.get(key) === next && !isSnoozed()) { send(); }
     }, delaySec * 1000);
     tgTimers.set(key, t);
   }
@@ -856,10 +915,14 @@ export function activate(context: vscode.ExtensionContext) {
     const sessions = readSessions();
     const agg = aggregateState(sessions);
 
+    // Status bar sempre (mostra il tempo nello stato che scorre).
+    renderStatusBar(sessions, agg);
+
+    // Webview solo quando cambia lo stato (per non azzerare l'animazione).
     const sig = agg + '|' + sessions.map(s => `${s.key}=${s.state}`).sort().join(',');
     if (sig !== lastSig) {
       lastSig = sig;
-      updateUI(sessions, agg);
+      updateView(sessions, agg);
     }
 
     // Notifiche per-sessione (indipendenti dal rendering).

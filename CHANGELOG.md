@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.16.0
+- **Tempo nello stato** live nella status bar (es. "in attesa da 45s", "lavora da 2m").
+- **Snooze notifiche**: comando "Snooze notifications" per silenziare desktop + Telegram per 15m/30m/1h/2h (icona 🔕 in status bar).
+
 ## 1.15.0
 - Pronta per la pubblicazione: icona, `publisher`, `repository`, `LICENSE` (MIT), keywords, questo changelog.
 

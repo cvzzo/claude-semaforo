@@ -2,7 +2,7 @@
   "name": "claude-semaforo",
   "displayName": "Claude Status",
   "description": "Visual traffic-light status for Claude Code, with per-session dots and desktop/Telegram notifications.",
-  "version": "1.15.0",
+  "version": "1.16.0",
   "publisher": "cvzzo",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -66,6 +66,10 @@
       {
         "command": "claudeSemaforo.renameSession",
         "title": "Claude Status: Rename a session"
+      },
+      {
+        "command": "claudeSemaforo.snooze",
+        "title": "Claude Status: Snooze notifications"
       },
       {
         "command": "claudeSemaforo.setupTelegram",
