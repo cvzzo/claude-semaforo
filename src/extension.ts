@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
+import * as https from 'https';
 import { execFile } from 'child_process';
 
 // ── Tipi di stato ──────────────────────────────────────────────────────────
@@ -380,6 +381,33 @@ const NOTIFY_TEXT: Record<SemaforoState, string> = {
   offline: 'Claude Code is not active',
 };
 
+// ── Notifica Telegram (via Bot API) ───────────────────────────────────────
+// Utile per essere avvisato quando sei lontano dal PC. Fire-and-forget.
+// onDone (opzionale) riceve un eventuale errore, usato dal comando di test.
+function sendTelegram(token: string, chatId: string, text: string, onDone?: (err?: string) => void): void {
+  if (!token || !chatId) { onDone?.('Bot token o chat id mancanti.'); return; }
+  const body = JSON.stringify({ chat_id: chatId, text, disable_notification: false });
+  const req = https.request(
+    {
+      hostname: 'api.telegram.org',
+      path: `/bot${token}/sendMessage`,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+    },
+    res => {
+      let data = '';
+      res.on('data', (c: Buffer) => { data += c; });
+      res.on('end', () => {
+        if (res.statusCode === 200) { onDone?.(); }
+        else { onDone?.(`HTTP ${res.statusCode}: ${data.slice(0, 200)}`); }
+      });
+    }
+  );
+  req.on('error', (e: Error) => onDone?.(e.message));
+  req.write(body);
+  req.end();
+}
+
 // ── Auto-provisioning degli hook di Claude Code ───────────────────────────
 // Utile soprattutto su nuove macchine e ambienti remoti: installando il .vsix
 // (lato workspace), l'estensione mette da sola l'hook in ~/.claude/hooks/ e può
@@ -521,6 +549,25 @@ export function activate(context: vscode.ExtensionContext) {
     })
   );
 
+  // Comando per testare la configurazione Telegram.
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claudeSemaforo.testTelegram', () => {
+      const cfg = vscode.workspace.getConfiguration('claudeSemaforo');
+      sendTelegram(
+        cfg.get<string>('telegram.botToken', ''),
+        cfg.get<string>('telegram.chatId', ''),
+        '🚦 Claude Status: test di notifica Telegram riuscito!',
+        (err) => {
+          if (err) {
+            vscode.window.showErrorMessage(`🚦 Telegram: invio fallito — ${err}`);
+          } else {
+            vscode.window.showInformationMessage('🚦 Telegram: messaggio di test inviato ✓');
+          }
+        }
+      );
+    })
+  );
+
   // Se gli hook non risultano configurati, proponi la configurazione one-click.
   if (!settingsConfigured()) {
     vscode.window.showInformationMessage(
@@ -536,17 +583,32 @@ export function activate(context: vscode.ExtensionContext) {
   const folderName = vscode.workspace.workspaceFolders?.[0]?.name;
   const notifyTitle = folderName ? `Claude Status — ${folderName}` : 'Claude Status';
 
-  // Decide se inviare la notifica di sistema per un cambio di stato, leggendo
-  // le impostazioni utente a runtime (i cambi valgono subito, senza reload).
+  const EMOJI: Record<SemaforoState, string> = { working: '🔴', waiting: '🟠', idle: '🟢', offline: '⚪' };
+
+  // Decide le notifiche per un cambio di stato, leggendo le impostazioni a
+  // runtime. Il toast desktop rispetta `when`/focus; Telegram è indipendente
+  // dal focus (ti serve proprio quando sei lontano dal PC).
   function maybeNotify(next: SemaforoState) {
     const cfg = vscode.workspace.getConfiguration('claudeSemaforo');
-    const when = cfg.get<string>('notifications.when', 'always');
-    if (when === 'never') { return; }
-    if (when === 'whenUnfocused' && vscode.window.state.focused) { return; }
     const states = cfg.get<string[]>('notifications.states', ['waiting', 'idle']);
     if (!states.includes(next)) { return; }
-    const sound = cfg.get<boolean>('notifications.sound', true);
-    notifyOS(notifyTitle, NOTIFY_TEXT[next], sound);
+
+    // Toast desktop (governato da notifications.when + focus)
+    const when = cfg.get<string>('notifications.when', 'always');
+    const desktopOk = when !== 'never' && !(when === 'whenUnfocused' && vscode.window.state.focused);
+    if (desktopOk) {
+      notifyOS(notifyTitle, NOTIFY_TEXT[next], cfg.get<boolean>('notifications.sound', true));
+    }
+
+    // Telegram (governato solo da telegram.enabled)
+    if (cfg.get<boolean>('telegram.enabled', false)) {
+      const suffix = folderName ? ` — ${folderName}` : '';
+      sendTelegram(
+        cfg.get<string>('telegram.botToken', ''),
+        cfg.get<string>('telegram.chatId', ''),
+        `${EMOJI[next]} ${NOTIFY_TEXT[next]}${suffix}`
+      );
+    }
   }
 
   // Firma dello stato mostrato: aggiorniamo il webview SOLO quando cambia,

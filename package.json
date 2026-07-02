@@ -2,7 +2,7 @@
   "name": "claude-semaforo",
   "displayName": "Claude Status",
   "description": "Semaforo visivo per lo stato di Claude Code",
-  "version": "1.10.2",
+  "version": "1.11.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -43,6 +43,10 @@
       {
         "command": "claudeSemaforo.setupHooks",
         "title": "Claude Status: Set up Claude Code hooks (this machine)"
+      },
+      {
+        "command": "claudeSemaforo.testTelegram",
+        "title": "Claude Status: Send a test Telegram message"
       }
     ],
     "configuration": {
@@ -89,6 +93,21 @@
           },
           "uniqueItems": true,
           "markdownDescription": "Which status changes trigger a notification."
+        },
+        "claudeSemaforo.telegram.enabled": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Also send a message to Telegram on status change (great for when you're away from the computer). Requires **botToken** and **chatId** below. Uses the same `notifications.states` filter but ignores window focus."
+        },
+        "claudeSemaforo.telegram.botToken": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Telegram bot token from [@BotFather](https://t.me/BotFather). Stored in plain text in settings."
+        },
+        "claudeSemaforo.telegram.chatId": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Your Telegram chat id (message the bot once, then run the command **Claude Status: Send a test Telegram message**, or use [@userinfobot](https://t.me/userinfobot))."
         },
         "claudeSemaforo.staleWorkingTimeoutSeconds": {
           "type": "number",

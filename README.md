@@ -154,6 +154,27 @@ La notifica scatta solo per gli stati in cui Claude aspetta te o ha finito:
 Il titolo include il nome della cartella, utile con più progetti aperti. Toast
 nativo: PowerShell (Windows), `osascript` (macOS), `notify-send` (Linux).
 
+### Notifiche Telegram (opzionale)
+
+Per essere avvisato **anche quando sei lontano dal PC** (sul telefono), puoi far
+inviare i cambi di stato a un bot Telegram. A differenza del toast, Telegram
+**ignora il focus** della finestra (parte comunque), ma usa lo stesso filtro
+`notifications.states`.
+
+Setup:
+
+1. Su Telegram apri [@BotFather](https://t.me/BotFather) → `/newbot` → ottieni il
+   **bot token**.
+2. Scrivi un messaggio qualsiasi al tuo nuovo bot (per "aprirlo").
+3. Ricava il tuo **chat id**: scrivi a [@userinfobot](https://t.me/userinfobot),
+   oppure imposta il token e lancia il comando **"Claude Status: Send a test
+   Telegram message"**.
+4. In Settings imposta `telegram.enabled = true`, `telegram.botToken`,
+   `telegram.chatId`.
+5. Verifica con il comando **"Claude Status: Send a test Telegram message"**.
+
+> Il token è salvato in chiaro in `settings.json`.
+
 **Impostazioni** (`File → Preferences → Settings`, cerca "Claude Status"):
 
 | Impostazione                                     | Default              | Cosa fa                                                                                 |
@@ -161,6 +182,9 @@ nativo: PowerShell (Windows), `osascript` (macOS), `notify-send` (Linux).
 | `claudeSemaforo.notifications.when`              | `always`             | Quando notificare: `always` (sempre, anche a finestra in primo piano), `whenUnfocused` (solo se non in primo piano), `never` (mai). |
 | `claudeSemaforo.notifications.sound`             | `true`               | Riproduce un suono con la notifica.                                                     |
 | `claudeSemaforo.notifications.states`            | `["waiting","idle"]` | Quali stati notificare (`working`, `waiting`, `idle`).                                  |
+| `claudeSemaforo.telegram.enabled`                | `false`              | Invia anche i cambi di stato a Telegram (ignora il focus).                              |
+| `claudeSemaforo.telegram.botToken`               | `""`                 | Token del bot (da @BotFather).                                                          |
+| `claudeSemaforo.telegram.chatId`                 | `""`                 | Il tuo chat id Telegram.                                                                |
 | `claudeSemaforo.staleWorkingTimeoutSeconds`      | `120`                | Rete di sicurezza per le interruzioni (vedi sotto). `0` = disattivato.                  |
 | `claudeSemaforo.sessionTimeoutMinutes`           | `10`                 | Dopo quanti minuti senza aggiornamenti una sessione è considerata chiusa e rimossa (`SessionEnd` non è garantito su chiusure forzate). Più basso = sparisce prima; `0` = mai. |
 
